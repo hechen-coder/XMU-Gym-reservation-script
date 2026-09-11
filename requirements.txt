@@ -1,0 +1,5 @@
+requests>=2.25.0
+pyyaml>=5.4.0
+pytest>=6.2.0
+pillow>=8.0.0
+# ddddocr>=1.4.0  # 可选安装：极速离线验证码识别库

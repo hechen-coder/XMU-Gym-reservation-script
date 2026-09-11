@@ -1,0 +1,43 @@
+# 厦大体育馆自动预约配置文件示例
+base_url: "https://xdty.xmu.edu.cn/bdlp_h5_fitness_test"
+
+# 认证与保活配置 (落地方案 1 与 方案 2)
+auth:
+  # 抓包或微信中获取的当前有效 PHPSESSID
+  phpsessid: "8f4ada1aad7d11f1909f0242ac110002"
+  # 心跳保活周期 (秒)，默认 300 秒 (5分钟) 发送一次请求保持 session 不过期
+  heartbeat_interval_seconds: 300
+  # 是否开启 Windows PC 微信静默唤醒与自动截取 (落地方案 2)
+  auto_harvest_enabled: false
+  wechat_appid: "wx81a2b2fa90759cb7"
+  # 可选：手动指定微信小程序运行核心进程路径 (如为空则自动扫描)
+  wechat_appex_path: ""
+
+# 预约目标场地配置
+target:
+  # 场馆与项目 (例如：翔安校区健身房 stadium_id=16, venue_id=14; 思明校区 stadium_id=6, venue_id=6)
+  stadium_id: 16
+  venue_id: 14
+  category_id: 8
+  stadium_name: "翔安校区健身房"
+  project_name: "健身房"
+  area_name: "爱秋体育馆健身房"
+  area_id: 67
+  user_range: "[67]"
+  
+  # 预约目标时段与日期偏移
+  # 例如："19:30-21:00"、"18:00-19:30"
+  preferred_time: "19:30-21:00"
+  # 日期偏移量：0 代表预约今天，1 代表预约明天 (默认明天)
+  target_date_offset: 1
+
+# 定时抢票与调度配置
+scheduler:
+  # 每天开放抢票的目标时刻 (24小时制)
+  target_time: "08:00:00"
+  # 提前探测与预热毫秒数 (防止延迟)
+  advance_ms: 200
+  # 失败重试次数
+  retry_count: 5
+  # 重试间隔时间 (毫秒)
+  retry_interval_ms: 150

@@ -1,0 +1,23 @@
+h2 200
+content-type: text/json; charset=utf-8
+date: Fri, 11 Sep 2026 01:09:21 GMT
+set-cookie: PHPSESSID=e24f23f66a70a905304f64e97a4dd584; path=/
+expires: Thu, 19 Nov 1981 08:52:00 GMT
+cache-control: no-store, no-cache, must-revalidate
+pragma: no-cache
+x-frame-options: SAMEORIGIN
+x-xss-protection: 1;mode=block
+referer-policy: origin
+content-security-policy: frame-ancestors 'self'
+x-permitted-cross-domain-policies: master-only
+x-download-options: SAMEORIGIN
+x-content-type-options: nosniff
+strict-transport-security: max-age=31536000
+set-cookie: Path=/; HttpOnly; Secure
+
+{
+    "data": "Qv+UeB\/kHiOoogAbArzJ+75Oi5xXFReKLEny8gNBEhZ9xq9YviNGjfDpvXKXzhmzKCMyPKi2QkBIihWN3xed0w==",
+    "status": 1,
+    "info": "",
+    "is_encrypt": 1
+}

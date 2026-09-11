@@ -1,0 +1,17 @@
+h2 200
+content-type: application/json; charset=utf-8
+date: Wed, 09 Sep 2026 05:46:48 GMT
+expires: Thu, 19 Nov 1981 08:52:00 GMT
+cache-control: no-store, no-cache, must-revalidate
+pragma: no-cache
+x-frame-options: SAMEORIGIN
+x-xss-protection: 1;mode=block
+referer-policy: origin
+content-security-policy: frame-ancestors 'self'
+x-permitted-cross-domain-policies: master-only
+x-download-options: SAMEORIGIN
+x-content-type-options: nosniff
+strict-transport-security: max-age=31536000
+set-cookie: Path=/; HttpOnly; Secure
+
+{"status":1,"info":"查询成功","data":{"category_id":"8","stadium":[{"id":16,"name":"翔安校区健身房","location":"翔安校区","cover":"https:\/\/data-ps788.lptiyu.com\/Public\/Upload\/pic\/stadium\/2025-07-24\/fdc36d59708f66a0edbbfb3f2df5fd76.jpeg?Expires=1753366254&amp;OSSAccessKeyId=LTAI5tSKvsbWe8CLQc2hDCZN&amp;Signature=9UZIS23fMN1p7Dx%2Fic4%2B%2FSxpS%2Bg%3D","venue_id":14},{"id":6,"name":"思明校区健身房","location":"思明校区","cover":"https:\/\/data.lptiyu.com\/Public\/Upload\/pic\/stadium\/2024-06-21\/090448959bf9adea51415928fca13e68.jpeg","venue_id":6}]}}

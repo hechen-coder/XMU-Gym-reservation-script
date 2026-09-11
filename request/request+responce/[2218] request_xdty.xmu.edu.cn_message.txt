@@ -1,0 +1,18 @@
+GET /bdlp_h5_fitness_test/view/stadium/choose.html?id=0&stadium_id=16&venue_id=14&user_range=[67]&category_id=8&project_name=%E5%81%A5%E8%BA%AB%E6%88%BF&name=%E7%BF%94%E5%AE%89%E6%A0%A1%E5%8C%BA%E5%81%A5%E8%BA%AB%E6%88%BF h2
+host: xdty.xmu.edu.cn
+upgrade-insecure-requests: 1
+user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF WindowsWechat(0x63090a13) UnifiedPCWindowsWechat(0xf2541721) XWEB/19027 miniProgram/wx81a2b2fa90759cb7
+accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/wxpic,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7
+sec-fetch-site: same-origin
+sec-fetch-mode: navigate
+sec-fetch-user: ?1
+sec-fetch-dest: document
+referer: https://xdty.xmu.edu.cn/bdlp_h5_fitness_test/view/stadium/detail.html?id=16&category_id=8
+accept-encoding: gzip, deflate, br
+accept-language: zh-CN,zh;q=0.9
+cookie: nostadium=1
+cookie: COOKIE_IS_APP_UI=0
+cookie: login_type=4
+cookie: PHPSESSID=814e35d1ac1111f1909f0242ac110002
+priority: u=0, i
+

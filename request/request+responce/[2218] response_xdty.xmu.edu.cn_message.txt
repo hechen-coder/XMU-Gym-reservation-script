@@ -1,0 +1,1031 @@
+h2 200
+content-type: text/html
+date: Wed, 09 Sep 2026 05:49:32 GMT
+last-modified: Mon, 07 Sep 2026 03:08:27 GMT
+etag: "6a9e2aab-8df3"
+accept-ranges: bytes
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
+    <title>选择场次</title>
+
+    <link rel="stylesheet" href="../../public/static/lib/layui/css/layui.css"/>
+    <link rel="stylesheet" href="../../public/static/css/style.css"/>
+    <style>
+        .max_font * {
+            font-size: 1.1rem !important;
+        }
+
+        .table-header {
+            display: flex;
+            box-sizing: border-box;
+            padding: 10px 0;
+        }
+
+        .time-table {
+            overflow-x: auto;
+            overflow-y: hidden;
+        }
+
+        .time-row {
+            display: flex;
+            box-sizing: border-box;
+            height: 40px;
+            line-height: 40px;
+        }
+
+        .time-col {
+            min-width: 6.6rem;
+            text-align: center;
+        }
+
+        .area-col {
+            min-width: 60px;
+            text-align: center;
+            box-sizing: border-box;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            word-break: break-all;
+        }
+
+        .slot-cell {
+            min-width: 60px;
+            text-align: center;
+            cursor: pointer;
+            background: #dff6ee;
+            border-right: 1px solid #fff;
+            border-bottom: 1px solid #fff;
+            position: relative;
+            box-sizing: border-box;
+        }
+
+        .slot-cell.locked,
+        .slot-cell.unavailable {
+            background-color: #d6d6d6;
+        }
+
+        .slot-cell.bg-2 {
+            background-color: #1dbf84;
+        }
+
+        .slot-cell.bg-2::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 50%;
+            height: 50%;
+            background: url("../../public/static/images/gouxuan.png") center center no-repeat;
+            background-size: contain;
+            pointer-events: none; /* 不影响点击 */
+        }
+
+        .slot-cell.bg-2 .slot-text {
+            position: relative;
+            z-index: 1;
+            color: #fff; /* 可以把选中状态的文字改成白色，更清晰 */
+        }
+
+        .f-container.stadium-choose .m-view .detail-box table td:first-child {
+            white-space: nowrap;
+            padding: 0 4px;
+        }
+
+        .info {
+            padding-bottom: 50px;
+        }
+
+        .f-container.stadium-choose .type {
+            display: flex;
+            flex-direction: row;
+            justify-content: center;
+            align-items: center;
+            background-color: rgba(255, 255, 255, 0.78);
+            height: 40px;
+        }
+
+        .f-container.stadium-choose .type .type-one {
+            display: flex;
+            flex-direction: row;
+            margin: 0 13px;
+            align-items: center;
+        }
+
+        .f-container.stadium-choose .type .type-one .icon.bg-1 {
+            background-color: #d6d6d6;
+        }
+
+        .f-container.stadium-choose .type .type-one .icon.bg-4 {
+            background-color: #dff6ee;
+        }
+
+        .f-container.stadium-choose .type .type-one .icon.bg-3 {
+            background-color: #1dbf84;
+        }
+
+        .f-container.stadium-choose .type .type-one .icon {
+            width: 15px;
+            height: 15px;
+            border-radius: 15px;
+            margin-right: 5px;
+        }
+
+        .layui-form-radio {
+            margin: 0 10px 0 0;
+        }
+
+        .layui-form-radio > i {
+            font-size: 13px;
+        }
+
+        .academy_info {
+            padding: 15px 15px 20px 15px;
+        }
+
+        .academy_info_item {
+            display: flex;
+            flex-direction: row;
+            justify-content: flex-start;
+            align-content: center;
+            align-items: baseline;
+        }
+
+        .academy_info_item .title {
+            font-size: 13px;
+            line-height: 100%;
+        }
+
+        .layui-input,
+        .layui-textarea {
+            display: block;
+            width: 40vh;
+            padding-left: 10px;
+        }
+
+        .detail-box table td.bg-2 {
+            background-color: #1dbf84;
+        }
+
+        .detail-box table td.bg-1 {
+            background-color: #d6d6d6 !important;
+        }
+
+        .m-view .detail-box {
+            height: 100% !important;
+        }
+
+        .detail-box table td.bg-5 {
+            background: #d6d6d6 !important;
+        }
+
+        .f-container.stadium-choose .m-view .detail-box table td {
+            min-width: 60px;
+            height: 40px;
+            border: 1px solid #fff;
+            background: #dff6ee;
+            background-size: auto 50%;
+            text-align: center;
+        }
+
+        .f-container.stadium-choose .m-view .detail-box table td.bg-1 {
+            background: #fde2cf;
+        }
+
+        .layui-layer-setwin {
+            bottom: 0 !important;
+            left: 50% !important;
+        }
+
+        .layui-layer-setwin .layui-layer-close2 {
+            top: 105% !important;
+            right: calc(100% - 15px) !important;
+        }
+
+        .u-radius {
+            border-radius: 10px;
+        }
+
+        .u-margin-top-10 {
+            margin-top: 10px;
+        }
+
+        .cur {
+            margin-bottom: 60px;
+            margin-top: 20px;
+            font-size: 16px;
+            color: #21c28c;
+        }
+
+        .persion {
+            font-size: 13px;
+        }
+
+        .deal {
+            padding-right: 5px;
+            width: 16px;
+        }
+
+        .persion .layui-icon-reduce-circle {
+            margin-right: 20px;
+            border: 1px solid red;
+        }
+
+        .modal {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            z-index: 9999;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            transition: all 0.2s ease;
+        }
+        .modal.hide {
+            transform: translateY(100%);
+        }
+        .modal.show {
+            transform: translateY(0);
+        }
+
+        .modal-content {
+            overflow: scroll;
+            height: 100%;
+            width: 100%;
+            background-color: #fff;
+            padding: 30px 0 80px;
+            border-radius: 10px;
+        }
+
+        .modal-transition-enter {
+            transform: translateY(100%);
+            opacity: 0;
+        }
+
+        .modal-transition-enter-active {
+            transition: all 0.5s ease;
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .modal-transition-leave {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .modal-transition-leave-active {
+            transition: all 0.5s ease;
+            transform: translateY(100%);
+            opacity: 0;
+        }
+
+        .modal-content {
+            font-size: 16px;
+        }
+
+        .mask {
+            position: fixed;
+            z-index: 9;
+            left: 0;
+            bottom: 0;
+            width: 100vw;
+            background: rgba(0, 0, 0, 0.3);
+            height: 100%;
+        }
+
+        .modal-content .border {
+            margin: 30px auto;
+            height: 1px;
+            background: #ccc;
+        }
+
+        .modal-content .line {
+            margin-bottom: 25px;
+        }
+
+        .modal-content .line:nth-child(2) {
+            margin-bottom: 30px;
+        }
+
+        .modal-content input {
+            line-height: 30px;
+            padding-left: 10px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+        }
+
+        .tip {
+            padding: 0 20px;
+        }
+
+        .tip .txt {
+            margin-bottom: 16px;
+        }
+
+        .modal-content .u-fixed-bottom {
+            color: #fff;
+            cursor: pointer;
+            line-height: 50px;
+            font-size: 16px;
+        }
+
+        .zwsj img {
+            margin: auto;
+            display: block;
+        }
+
+        .zwsj {
+            text-align: center;
+        }
+
+        .zwsj p {
+            font-size: 17px;
+            font-family: PingFang SC;
+            color: #777;
+            margin-top: 20px;
+        }
+
+        .xd .cur {
+            color: #003c88;
+        }
+
+        .xd .bg-succ {
+            background: #003c88;
+        }
+
+        .xd .u-flex-dis {
+            background: #6d8db6;
+        }
+
+        .fix #send {
+            transform: translateY(-44px);
+        }
+
+        .none {
+            display: none;
+        }
+
+        .none_dis {
+            display: block;
+        }
+
+        /* 日期选中高亮 */
+        .m-tab-item.active {
+            color: #1677ff;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+<div
+        class="f-container stadium-choose"
+        :class="is_app?'stadium-choose-app home-app':''"
+        id="content"
+>
+    <!--app下此处stadium-choose-app-->
+    <header class="mod-header header-border">
+        <!--app下此处mod-header-app-->
+        <a
+                class="back layui-icon layui-icon-left"
+                href="javascript:history.back(-1)"
+        ></a>
+        <h1 class="pagename">选择场次</h1>
+    </header>
+    <div class="info" v-if="is_done">
+        <div class="head">
+            <div class="m-tab">
+                <div class="m-tab-item"
+                     v-for="(item, index) in dataList.date_list"
+                     :class="viewIndex == index ? 'active' : ''"
+                     @click="changeDate(index)">
+                    <span class="title">{{item.week}}</span>
+                    <span class="date">{{item.date}}</span>
+                    <i class="bottom-line"></i>
+                </div>
+            </div>
+        </div>
+        <div class="body">
+            <div class="time-table">
+                <div class="table-header">
+                    <div class="time-col">
+                    </div>
+                    <div v-for="col in dataList.column_list" :key="col.column_id" class="area-col">
+                        {{ col.name }}
+                    </div>
+                </div>
+
+                <div v-for="time in currentTimeSlots" :key="time.time_range" class="time-row">
+                    <div class="time-col">{{ time.time_range }}</div>
+                    <div v-for="(slot, slotIndex) in time.slots" :key="slotIndex"
+                         class="slot-cell" :class="getClass(slot)"
+                         :data-date="slot.date"
+                         :data-area-id="slot.column_id"
+                         :data-area-name="slot.area_name"
+                         :data-interval-time="time.time_range"
+                         :data-interval-id="slot.interval_id"
+                         :data-week="time.week"
+                         :data-week-msg="time.week_name"
+                         :data-price="slot.price"
+                         @click="choose($event, slot, $event.currentTarget)">
+                        <span v-if="slot.status === 'available'">{{ slot.selected
+                            }}/{{ radio == 1 ? dataList.personal_num : dataList.team_num }}</span>
+                        <span v-if="slot.status === 'unavailable'">{{ slot.selected
+                            }}/{{ radio == 1 ? dataList.personal_num : dataList.team_num }}</span>
+                        <span v-else-if="slot.status === 'locked'" class="layui-icon empty-icon"></span>
+                    </div>
+                </div>
+            </div>
+            <div class="type">
+                <div class="type-one u-flex">
+                    <div class="icon bg-1"></div>
+                    <div class="detail">不可选</div>
+                </div>
+                <div class="type-one u-flex">
+                    <div class="icon bg-4"></div>
+                    <div class="detail">可预约</div>
+                </div>
+                <div class="type-one u-flex">
+                    <div class="icon bg-3"></div>
+                    <div class="detail">已选择</div>
+                </div>
+            </div>
+            <div class="academy_info">
+                <div class="layui-form u-flex">
+                    <div class="title">预约类型：</div>
+                    <div @click="changeRadio(1)">
+                        <input
+                                type="radio"
+                                name="type"
+                                value="1"
+                                title="个人"
+                                v-model="radio"
+                                checked
+                        />
+                    </div>
+                    <label @click="changeRadio(2)">
+                        <input
+                                type="radio"
+                                name="type"
+                                value="2"
+                                title="包场"
+                                v-model="radio"
+                        />
+                    </label>
+                </div>
+                <!-- 随行人员  -->
+                <template v-if="add_auth && radio === 1">
+                    <div class="u-flex persion">
+                        <span class="u-margin-right-10">随行人员：</span>
+                        <span>
+                  {{persionList.length == 0 ? '暂无' : `已添加${persionList.length}人`}}</span
+                        >
+                    </div>
+                    <div
+                            v-for="(item,i) in persionList"
+                            :key="i"
+                            class="u-margin-top-10 u-font-14 persion-list"
+                    >
+                        <img
+                                @click="deal(i)"
+                                class="deal"
+                                src="../../public/static/images/jx_qjsp_no.png"
+                        />
+                        <span>{{item.name}}（{{item.value}}）</span>
+                    </div>
+                    <div @click.stop="showModal" class="u-flex u-row-center cur">
+                        + 添加随行人员
+                    </div>
+                </template>
+                <!-- <div class="academy_info_item" v-if="is_academy == 2">
+                            <div class="title">学院名称：</div>
+                            <div>
+                                <input type="text" name="academy_name" id="academy_name" lay-verify="title"
+                                    autocomplete="off" placeholder="请输入学院名称" class="layui-input">
+                            </div>
+                        </div>
+                        <div class="academy_info_item layui-form-text" v-if="is_academy == 2">
+                            <div class="title">备注说明：</div>
+                            <div>
+                                <textarea placeholder="请输入备注说明" class="layui-textarea" name="mark" id="mark"></textarea>
+                            </div>
+                        </div> -->
+            </div>
+        </div>
+        <div class="foot">
+            <div id="send" class="btn active" :class="dis" @click="toConfirm()">
+                {{ btnText }}
+            </div>
+        </div>
+    </div>
+    <!-- 弹出层   -->
+    <transition name="modal-transition">
+        <div class="modal" :class="isModalVisible ? 'show' : 'hide'">
+            <div class="modal-content">
+                <!-- 这里放置弹出层的具体内容 -->
+                <div class="line u-flex u-row-center">
+                    <label>
+                        姓名：
+                        <input
+                                v-model="persion"
+                                class="u-margin-left-10"
+                                placeholder="请输入姓名"
+                        />
+                    </label>
+                </div>
+                <div class="line u-flex u-row-center">
+                    <label>
+                        学号：
+                        <input
+                                v-model="student_num"
+                                class="u-margin-left-10"
+                                placeholder="请输入学号"
+                        />
+                    </label>
+                </div>
+
+                <div class="border"></div>
+                <div class="tip">
+                    <div style="margin-bottom:20px">说明：</div>
+                    <div class="txt">
+                        1，随行人员需在限定时间内，在我的预约订单中完成确认
+                    </div>
+                    <div class="txt">2，超时未确认，预约将自动失效</div>
+                    <div class="txt">3，具体开放规则以系统内展示为准</div>
+                </div>
+                <div
+                        :class="{'u-flex-dis':!persion||!student_num}"
+                        @click="add"
+                        class="u-fixed-bottom u-text-center bg-succ"
+                >
+                    确定
+                </div>
+            </div>
+        </div>
+    </transition>
+    <div
+            @click="isModalVisible=false"
+            class="mask"
+            v-show="isModalVisible"
+    ></div>
+</div>
+
+<script src="../../public/static/lib/layui/layui.js"></script>
+<script src="../../public/static/lib/jquery-3.3.1.min.js"></script>
+<script src="../../public/static/js/common.js"></script>
+<script src="../../public/static/js/jquery.cookie.js"></script>
+<script src="../../public/static/js/vue.js"></script>
+<script src="../../public/static/js/hidetitle.js"></script>
+
+<script>
+    // td dom渲染后更新td
+    let tdTimer = null;
+
+    function isIOSNotchScreen() {
+        // 检测是否为 iOS 设备
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+        if (!isIOS) return false;
+
+        // 检测是否存在刘海屏的安全区域
+        const screenWidth = window.innerWidth;
+        const screenHeight = window.innerHeight;
+        const isNotch = isIOS && screenWidth >= 375 && screenHeight >= 812;
+        return isNotch;
+    }
+
+    document.addEventListener("DOMContentLoaded", function () {
+        if (isIOSNotchScreen()) {
+            document.body.classList.add("fix");
+        }
+    });
+    var vm = new Vue({
+        el: "#content",
+        data() {
+            return {
+                dataList: {},
+                viewIndex: 0,
+                stadium_id: 0,
+                category_id: 0,
+                project_name: '',
+                can_choose: 0,
+                is_app: 0,
+                is_done: false,
+                is_academy: 1,
+                isModalVisible: false,
+                persionList: [],
+                persion: null,
+                student_num: null,
+                inputerror: false,
+                radio: 1,
+                add_auth: null,
+                personal_num: 0,
+                team_num: 0,
+                btnText: '请先选择场次',
+                dis: 'dis',
+                venue_appointment_min_num: 0,// 是否开启最少预约人数限制0关闭大于0开启
+                confirm_time: '半小时',
+                is_can_choose: 1,
+                is_can_choose_tips: '',
+                originTimeSlotList: [],
+                selectedSlots: []
+            }
+        },
+        computed: {
+            max() {
+                const {personal_num = "", team_num = ""} = this.dataList;
+                return this.is_academy == 1 ? personal_num : team_num;
+            },
+            limit() {
+                let temp =
+                    this.radio == 1
+                        ? this.dataList.personal_num
+                        : this.dataList.team_num;
+                return (temp - 1) | 0;
+            },
+            // 当前选中日期对应的时段列表（核心联动）
+            currentTimeSlots() {
+                if (!this.dataList.date_list || !this.originTimeSlotList.length) return []
+                const currentDate = this.dataList.date_list[this.viewIndex]?.date_int
+                return this.originTimeSlotList.filter(item => item.date === currentDate)
+            }
+        },
+        methods: {
+            getClass(slot) {
+                const {personal_num = 0, team_num = 0} = this.dataList;
+                const max = parseInt(this.is_academy) === 1 ? personal_num : team_num;
+                if (slot.selected >= max) {
+                    return 'unavailable'
+                }
+                return slot.status
+            },
+            changeDate(index) {
+                this.viewIndex = index
+                this.$nextTick(() => {
+                    this.restoreSelectedStatus();
+                });
+                this.setBtnStatus()
+            },
+            restoreSelectedStatus() {
+                document.querySelectorAll('.slot-cell').forEach(el => {
+                    const date = el.dataset.date;
+                    const column_id = el.dataset.areaId;
+                    const interval_id = el.dataset.intervalId;
+
+                    if (!date || !column_id || !interval_id) return;
+
+                    const key = `${date}_${column_id}_${interval_id}`;
+                    const isSelected = this.selectedSlots.some(item => item.key === key);
+                    if (isSelected) {
+                        $(el).addClass('bg-2');
+                    } else {
+                        $(el).removeClass('bg-2');
+                    }
+                });
+            },
+            deal(i) {
+                this.persionList.splice(i, 1)
+                this.setBtnStatus()
+            },
+            add: debounce(function () {
+                if (!this.persion || !this.stadium_id) {
+                    layer.msg("请输入姓名或学号");
+                    return;
+                }
+                const areaIds = [];
+                this.selectedSlots.forEach(item => {
+                    areaIds.push(item.item.area_id);
+                });
+                let that = this;
+                layer.load(2, {shade: false});
+                request("/index/stadium/check_add_auth", {
+                    stadium_id: this.stadium_id,
+                    name: this.persion,
+                    student_num: this.student_num,
+                    area_ids: areaIds.join(","),
+                    venue_id: this.venue_id,
+                    category_id: this.category_id
+                })
+                    .then((rs) => {
+                        layer.closeAll();
+                        const {uid = null} = rs.data;
+                        if (rs.status == 0) {
+                            layer.msg(rs.info);
+                        } else if (rs.status == 1) {
+                            // 重复时跳过更新为新版
+                            that.persionList = that.persionList.filter((item) => {
+                                return item.id != uid;
+                            });
+                            that.persionList = [
+                                ...that.persionList,
+                                {
+                                    name: that.persion,
+                                    value: that.student_num,
+                                    id: uid,
+                                },
+                            ];
+                            layer.msg("添加成功");
+                            that.setBtnStatus()
+                            that.hideModal();
+                        } else if (rs.status == -1) {
+                            layuiLoginOpen();
+                        }
+                    })
+                    .catch(() => {
+                        layer.closeAll();
+                        that.hideModal();
+                    });
+            }, 200),
+            showModal() {
+                if (this.is_can_choose === 0) {
+                    layer.msg(this.is_can_choose_tips)
+                    return
+                }
+                if (this.persionList.length >= this.limit) {
+                    layer.msg("已选场次名额不足，请更换场次");
+                    return;
+                }
+                this.persion = null;
+                this.student_num = null;
+                this.isModalVisible = true;
+            },
+            hideModal() {
+                this.isModalVisible = false;
+            },
+            set_list: function (v) {
+                this.dataList = v;
+                this.personal_num = v.personal_num;
+                this.team_num = v.team_num;
+                this.originTimeSlotList = JSON.parse(JSON.stringify(v.time_slot_list))
+            },
+            changeView: function (index) {
+                if (index < this.viewIndex) {
+                    if (index >= 1) {
+                        this.scrollToPosition(index - 1);
+                    }
+                } else {
+                    if (index + 2 <= this.dataList.interval.length) {
+                        this.scrollToPosition(index + 1);
+                    }
+                }
+
+                this.viewIndex = index;
+            },
+            scrollToPosition(index) {
+                document
+                    .getElementsByClassName("m-tab-item")
+                    [index].scrollIntoView({
+                    behavior: "smooth",
+                });
+            },
+            setBtnStatus() {
+                const selectedCount = this.selectedSlots.length;
+                if (this.venue_appointment_min_num > 0) {
+                    //开启了最少预约人数限制
+                    const yet = selectedCount > 0 ? 1 : 0;
+                    if (yet + this.persionList.length < this.venue_appointment_min_num) {
+                        if (yet > 0) {
+                            this.btnText = (this.persionList.length > 0 ? '还需添加 ' : '请最少添加 ') + (this.venue_appointment_min_num - 1 - this.persionList.length) + ' 名随行人员'
+                        } else {
+                            this.btnText = '请先选择场次'
+                        }
+                        this.dis = 'dis';
+                    } else {
+                        this.btnText = '确认预约'
+                        this.dis = '';
+                    }
+                } else {
+                    this.btnText = selectedCount >= 1 ? '确认预约' : '请先选择场次'
+                    this.dis = selectedCount >= 1 ? '' : 'dis';
+                }
+            },
+            toConfirm() {
+                if (this.is_can_choose === 0) {
+                    layer.msg(this.is_can_choose_tips)
+                    return
+                }
+                let price = 0
+                let list = this.selectedSlots.map(i => {
+                    price += parseFloat(i.item.price)
+                    return i.item
+                });
+                price = price.toFixed(2)
+                if (this.venue_appointment_min_num > 0) {
+                    if (this.persionList.length + 1 < this.venue_appointment_min_num) {
+                        const btnText = (this.persionList.length > 0 ? '还需添加 ' : '请最少添加 ') + (this.venue_appointment_min_num - 1 - this.persionList.length) + ' 名随行人员'
+                        layer.msg(btnText)
+                        return false
+                    }
+                }
+                if (list.length === 0) {
+                    layer.msg("请选择场次");
+                    return false;
+                }
+                const self = this
+                loadingPlugin.showLoading();
+                request('/index/stadium/chooseVerify', {
+                    stadium_id: getQueryVariable('stadium_id'),
+                    selected: JSON.stringify(list),
+                    venue_id: getQueryVariable('venue_id'),
+                    is_academy: self.is_academy,
+                    ids: self.radio === 1 ? self.persionList.map(item => item.id).join(',') : ''
+                }, 2).then(rs => {
+                    if (rs.status) {
+                        const is_academy = this.is_academy;
+                        const academy_name = '';
+                        const mark = '';
+                        list = JSON.stringify(list)
+                        const stadium_id = getQueryVariable('stadium_id');
+                        const venue_id = getQueryVariable('venue_id');
+                        const category_id = getQueryVariable('category_id')
+                        const project_name = this.project_name;
+                        const name = this.name;
+                        const p_count = self.persionList.length;
+                        const params = {
+                            stadium_id,
+                            venue_id,
+                            category_id,
+                            project_name,
+                            list,
+                            name,
+                            is_academy,
+                            academy_name,
+                            mark,
+                            price
+                        };
+                        if (this.radio === 1) {
+                            params.p_count = p_count;
+                            params.ids = self.persionList.map(item => item.id).join(',');
+                        }else{
+                            params.p_count = 0
+                            params.ids = ''
+                        }
+                        params.price = price > 0 ? (params.p_count + 1) * price : 0
+                        this.navigateToPage('./confirm.html', params)
+                    }
+                }).catch(() => {
+                }).finally(() => {
+                    loadingPlugin.hideLoading();
+                })
+            },
+            init() {
+                vm.is_app = parseInt($.cookie("COOKIE_IS_APP_UI"));
+
+                var venue_id = this.venue_id;
+                var stadium_id = this.stadium_id;
+                var user_range = this.user_range;
+
+                request("/stadium/interval/getInterval", {
+                    venue_id: venue_id,
+                    stadium_id: stadium_id,
+                    user_range: user_range,
+                    category_id: this.category_id
+                }).then((rs) => {
+                    if (rs.status == 0) {
+                        layer.msg(rs.info);
+                    } else if (rs.status == 1) {
+                        vm.set_list(rs.data);
+                        vm.add_auth = rs.data.add_auth;
+                        vm.venue_appointment_min_num = rs.data.venue_appointment_min_num
+                        vm.confirm_time = rs.data.confirm_time
+                        vm.neighbor = rs.data.neighbor
+                        vm.is_can_choose = rs.data.is_can_choose
+                        vm.is_can_choose_tips = rs.data.is_can_choose_tips
+                        vm.is_done = true;
+                        this.$nextTick(function () {
+                            layui.use(['form'], function () {
+                                const form = layui.form;
+                                form.render()
+                                form.on('radio(type)', function (data) {
+                                    vm.is_academy = data.value
+                                })
+                            })
+                        })
+                    } else if (rs.status == -1) {
+                        layuiLoginOpen();
+                    }
+                });
+            },
+            choose(e, item, cellEl) {
+                const target = $(cellEl)
+                if (item.status !== 'available' || target.hasClass('unavailable')) {
+                    if (item.lock_reason) {
+                        layer.msg(item.lock_reason)
+                    }
+                    return
+                }
+                if (this.is_can_choose === 0) {
+                    layer.msg(this.is_can_choose_tips)
+                    return
+                }
+                const key = `${item.date}_${item.column_id}_${item.interval_id}`;
+                const isSelected = target.hasClass('bg-2');
+                if (isSelected) {
+                    // 取消选中：从数组移除
+                    target.removeClass('bg-2');
+                    this.selectedSlots = this.selectedSlots.filter(i => i.key !== key);
+                } else {
+                    // 选中：加入数组
+                    target.addClass('bg-2');
+                    this.selectedSlots.push({
+                        key: key,
+                        item: {
+                            date: target.attr('data-date'),
+                            week: target.attr('data-week'),
+                            week_msg: target.attr('data-week-msg'),
+                            area_name: target.attr('data-area-name'),
+                            interval_time: target.attr('data-interval-time'),
+                            interval_id: target.attr('data-interval-id'),
+                            area_id: target.attr('data-area-id'),
+                            price: target.attr('data-price')
+                        }
+                    })
+                }
+                this.setBtnStatus()
+                return true
+            },
+            changeRadio(val) {
+                if (val === this.radio) {
+                    return false
+                }
+                this.is_academy = val;
+                this.radio = val;
+                $(".slot-cell").each(function (index, el) {
+                    $(el).removeClass("bg-2")
+                });
+                this.selectedSlots = []
+                this.can_choose = 0;
+                this.setBtnStatus()
+            },
+            preview(e, img_url) {
+                if (img_url == "") {
+                    layer.msg("暂无预览图");
+                    return false;
+                }
+                var auto_img = {};
+                var img = new Image();
+                img.src = img_url;
+                img.onload = function () {
+                    var max_height = $(window).height() - 100;
+                    var max_width = $(window).width();
+                    var rate1 = max_height / img.height;
+                    var rate2 = max_width / img.width;
+                    var rate3 = 1;
+                    var rate = Math.min(rate1, rate2, rate3);
+                    auto_img.height = img.height * rate;
+                    auto_img.width = img.width * rate;
+                    layer.open({
+                        type: 1,
+                        title: false,
+                        area: ["300px", "300px"],
+                        skin: "layui-layer-nobg", //没有背景色
+                        shadeClose: true,
+
+                        closeBtn: 1,
+                        content:
+                            "<img src='" +
+                            img_url +
+                            "' width=100% height='100%' class='u-radius'>",
+                    });
+                };
+            },
+            navigateToPage(path, params) {
+                // 过滤掉值为 null/undefined/空字符串 的参数，避免无效参数
+                const validParams = Object.entries(params).reduce((acc, [key, value]) => {
+                    if (value != null) {
+                        // 数组自动转逗号分隔字符串，其他类型直接转字符串
+                        acc[key] = Array.isArray(value) ? value.join(',') : String(value);
+                    }
+                    return acc;
+                }, {});
+                const queryString = new URLSearchParams(validParams).toString();
+                window.location.href = queryString ? `${path}?${queryString}` : path;
+            }
+        },
+        updated: function () {
+            layui.use(["layer", "form"], function () {
+                const form = layui.form;
+                form.render();
+            });
+        },
+    });
+
+    $(document).ready(function () {
+        vm.viewIndex = getQueryVariable('id') || 0
+        vm.stadium_id = getQueryVariable('stadium_id')
+        vm.venue_id = getQueryVariable('venue_id')
+        vm.user_range = getQueryVariable('user_range')
+        vm.project_name = getQueryVariable('project_name')
+        vm.name = getQueryVariable('name')
+        vm.category_id = getQueryVariable('category_id')
+        vm.init()
+    })
+</script>
+</body>
+</html>
