@@ -13,7 +13,7 @@ class TimeSync:
     def get_server_time_offset(url: str = "https://xdty.xmu.edu.cn/bdlp_h5_fitness_test") -> float:
         try:
             t0 = time.time()
-            resp = requests.head(url, timeout=5)
+            resp = requests.head(url, timeout=5, proxies={"http": None, "https": None})
             t1 = time.time()
             rtt = t1 - t0
             date_str = resp.headers.get("Date")

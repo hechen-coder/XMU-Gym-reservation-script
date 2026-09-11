@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+*.class
+.pytest_cache/
+config/config.yaml
+captchas/
+

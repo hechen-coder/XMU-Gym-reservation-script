@@ -86,3 +86,43 @@ def test_booking_engine_retry_on_captcha_error():
     
     assert result["success"] is True
     assert api.add_order.call_count == 2
+
+def test_booking_engine_with_interval_id():
+    api = Mock()
+    solver = Mock()
+    solver.solve.return_value = "daxs"
+
+    slot = SlotItem(
+        column_id="67",
+        date="2026-09-12",
+        area_name="爱秋体育馆健身房",
+        interval_id="3087",
+        price=0,
+        selected=10,
+        max_count=95,
+        status="available"
+    )
+    mock_resp = Mock()
+    mock_resp.find_by_id.return_value = (Mock(week="6", week_name="周六", time_range="19:30-21:00"), slot)
+    api.get_intervals.return_value = mock_resp
+    api.choose_verify.return_value = {"status": 1}
+    api.get_captcha.return_value = b"bytes"
+    api.add_order.return_value = {"status": 1, "info": "预约成功"}
+
+    engine = BookingEngine(api=api, captcha_solver=solver, config=AppConfig())
+    res = engine.execute_booking(interval_id="3087")
+    assert res["success"] is True
+    assert res["slot"].interval_id == "3087"
+
+def test_booking_engine_snipe_booking_success():
+    api = Mock()
+    engine = BookingEngine(api=api, captcha_solver=Mock(), config=AppConfig())
+    with patch.object(engine, "execute_booking") as mock_exec:
+        # First attempt full, second attempt success
+        mock_exec.side_effect = [
+            {"success": False, "info": "已约满", "full": True},
+            {"success": True, "info": "捡漏成功"}
+        ]
+        res = engine.snipe_booking(target_date="2026-09-12", poll_interval=0.01, max_duration_seconds=5)
+        assert res["success"] is True
+        assert mock_exec.call_count == 2

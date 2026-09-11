@@ -135,3 +135,44 @@ def test_my_subscribe(mock_client):
         res = api.my_subscribe(page=1)
         assert res["status"] == 1
         assert mock_post.call_args[1]["data"]["p"] == 1
+
+def test_generate_captcha_sign():
+    # Verify MD5 signature formula
+    sign = XdtyApi.generate_captcha_sign(r=0.5, t=1700000000, uid="1073507")
+    assert isinstance(sign, str)
+    assert len(sign) == 32
+
+def test_get_captcha(mock_client):
+    api = XdtyApi(mock_client, uid="1073507")
+    with patch.object(mock_client.session, 'get') as mock_get:
+        mock_resp = Mock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"content-type": "image/png"}
+        mock_resp.content = b"\x89PNG\r\n\x1a\nfake_image"
+        mock_get.return_value = mock_resp
+
+        data = api.get_captcha()
+        assert data.startswith(b"\x89PNG")
+        assert mock_get.called
+        call_url, call_kwargs = mock_get.call_args
+        assert "public/index.php/index/index/captcha" in call_url[0]
+        assert "sign" in call_kwargs["params"]
+        assert "r" in call_kwargs["params"]
+        assert "t" in call_kwargs["params"]
+
+def test_get_uid_auto(mock_client):
+    api = XdtyApi(mock_client)
+    with patch.object(mock_client.session, 'post') as mock_post:
+        mock_resp = Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "status": 1,
+            "info": "查询成功",
+            "data": [{"uid": "1073507", "order_id": 123}]
+        }
+        mock_post.return_value = mock_resp
+
+        uid = api.get_uid()
+        assert uid == "1073507"
+        assert api._uid == "1073507"
+

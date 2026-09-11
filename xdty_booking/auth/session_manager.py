@@ -30,6 +30,10 @@ class SessionManager:
         返回 True 表示当前 Session 有效且能正常获取预约数据；
         返回 False 表示已失效或网络不可达。
         """
+        if not self.phpsessid:
+            logger.warning("Session Token 为空，判定为未登录或失效状态")
+            return False
+
         try:
             resp = self.api.my_subscribe(page=1)
             # 接口在有效时返回 {"status": 1, ...}
@@ -56,7 +60,9 @@ class SessionManager:
             else:
                 logger.error(f"[{current_time}] ⚠️ Session 已失效或未能成功保活！")
                 if self.on_expired:
-                    self.on_expired()
+                    new_token = self.on_expired()
+                    if new_token:
+                        self.update_token(new_token)
             
             # 分段休眠，以便快速响应 stop 信号
             for _ in range(interval_seconds):

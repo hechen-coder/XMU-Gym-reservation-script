@@ -12,3 +12,5 @@ def test_cli_help():
     assert "book" in res.stdout
     assert "heartbeat" in res.stdout
     assert "check" in res.stdout
+    assert "harvest" in res.stdout
+    assert "query" in res.stdout

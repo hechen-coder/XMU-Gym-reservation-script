@@ -5,10 +5,12 @@ base_url: "https://xdty.xmu.edu.cn/bdlp_h5_fitness_test"
 auth:
   # 抓包或微信中获取的当前有效 PHPSESSID
   phpsessid: "8f4ada1aad7d11f1909f0242ac110002"
+  # 用户 UID (可选，留空则自动通过预约历史接口获取)
+  uid: "1073507"
   # 心跳保活周期 (秒)，默认 300 秒 (5分钟) 发送一次请求保持 session 不过期
   heartbeat_interval_seconds: 300
   # 是否开启 Windows PC 微信静默唤醒与自动截取 (落地方案 2)
-  auto_harvest_enabled: false
+  auto_harvest_enabled: true
   wechat_appid: "wx81a2b2fa90759cb7"
   # 可选：手动指定微信小程序运行核心进程路径 (如为空则自动扫描)
   wechat_appex_path: ""

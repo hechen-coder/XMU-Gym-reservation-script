@@ -6,6 +6,7 @@ from typing import Optional
 @dataclass
 class AuthConfig:
     phpsessid: str = ""
+    uid: str = ""
     heartbeat_interval_seconds: int = 300
     auto_harvest_enabled: bool = False
     wechat_appid: str = "wx81a2b2fa90759cb7"
@@ -54,3 +55,28 @@ def load_config(config_path: str = "config/config.yaml") -> AppConfig:
         target=TargetConfig(**target_data),
         scheduler=SchedulerConfig(**scheduler_data)
     )
+
+def save_phpsessid(config_path: str, new_token: str) -> bool:
+    """
+    持久化回写新的 PHPSESSID 至配置文件，保留原有注释与缩进
+    """
+    if not os.path.exists(config_path):
+        return False
+
+    import re
+    with open(config_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    pattern = r'(phpsessid:\s*)(["\']?[a-zA-Z0-9_-]*["\']?)'
+    if re.search(pattern, content):
+        new_content = re.sub(pattern, rf'\g<1>"{new_token}"', content, count=1)
+    else:
+        data = yaml.safe_load(content) or {}
+        if "auth" not in data:
+            data["auth"] = {}
+        data["auth"]["phpsessid"] = new_token
+        new_content = yaml.dump(data, allow_unicode=True, sort_keys=False)
+
+    with open(config_path, "w", encoding="utf-8") as f:
+        f.write(new_content)
+    return True

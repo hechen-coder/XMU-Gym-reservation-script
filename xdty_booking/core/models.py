@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 
 @dataclass
 class SlotItem:
@@ -22,6 +22,23 @@ class SlotItem:
     @property
     def remaining_capacity(self) -> int:
         return max(0, self.max_count - self.selected)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "column_id": self.column_id,
+            "date": self.date,
+            "area_name": self.area_name,
+            "interval_id": self.interval_id,
+            "price": self.price,
+            "selected": self.selected,
+            "max_count": self.max_count,
+            "status": self.status,
+            "select_type": self.select_type,
+            "is_lock": self.is_lock,
+            "lock_reason": self.lock_reason,
+            "is_available": self.is_available,
+            "remaining_capacity": self.remaining_capacity
+        }
 
 @dataclass
 class TimeSlotGroup:
@@ -84,10 +101,29 @@ class IntervalResponse:
             time_slot_list=groups
         )
 
-    def find_slot(self, date: str, time_range: str, column_id: Optional[str] = None) -> Optional[SlotItem]:
+    def find_slot_with_group(
+        self,
+        date: Optional[str] = None,
+        time_range: Optional[str] = None,
+        column_id: Optional[str] = None,
+        interval_id: Optional[str] = None
+    ) -> Optional[Tuple[TimeSlotGroup, SlotItem]]:
         for g in self.time_slot_list:
-            if g.date == date and g.time_range == time_range:
-                for slot in g.slots:
-                    if column_id is None or slot.column_id == str(column_id):
-                        return slot
+            if date and g.date != date:
+                continue
+            if time_range and g.time_range != time_range:
+                continue
+            for slot in g.slots:
+                if interval_id and slot.interval_id != str(interval_id):
+                    continue
+                if column_id and slot.column_id != str(column_id):
+                    continue
+                return g, slot
         return None
+
+    def find_slot(self, date: str, time_range: str, column_id: Optional[str] = None) -> Optional[SlotItem]:
+        res = self.find_slot_with_group(date=date, time_range=time_range, column_id=column_id)
+        return res[1] if res else None
+
+    def find_by_id(self, interval_id: str) -> Optional[Tuple[TimeSlotGroup, SlotItem]]:
+        return self.find_slot_with_group(interval_id=str(interval_id))

@@ -28,6 +28,8 @@ class ApiClient:
     def __init__(self, base_url: str = "https://xdty.xmu.edu.cn/bdlp_h5_fitness_test"):
         self.base_url = base_url.rstrip("/")
         self.session = requests.Session()
+        # 禁用系统代理干扰，直连校园网系统，防止被本地科学上网代理（Clash/V2Ray等）拦截导致 SSL EOF 异常
+        self.session.trust_env = False
         self.session.headers.update(DEFAULT_HEADERS)
         self.session.cookies.set("Path", "/")
         self.session.cookies.set("login_type", "4")

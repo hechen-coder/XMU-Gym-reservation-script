@@ -22,3 +22,13 @@ def test_captcha_solver_fallback_empty():
     img_bytes = generate_test_image("test")
     res = solver.solve(img_bytes)
     assert isinstance(res, str)
+
+def test_captcha_solver_save_image(tmp_path):
+    save_dir = str(tmp_path / "captchas")
+    solver = CaptchaSolver(use_mock=True, mock_result="test", save_dir=save_dir)
+    img_bytes = generate_test_image("test")
+    res = solver.solve(img_bytes)
+    assert res == "test"
+    files = list((tmp_path / "captchas").glob("*.png"))
+    assert len(files) == 1
+
