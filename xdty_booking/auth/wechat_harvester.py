@@ -148,9 +148,10 @@ class WeChatHarvester:
             logger.debug(f"窗口激活异常: {e}")
             return False
 
-    def find_desktop_shortcut(self, keywords: tuple = ("厦大体育", "体育馆")) -> Optional[str]:
+    def find_desktop_shortcut(self, keywords: tuple = ("场馆预约", "健身房", "爱秋", "厦大体育", "体育馆", "体育")) -> Optional[str]:
         """
         检索桌面是否存在小程序快捷方式 (.lnk)
+        优先匹配场馆/健身房直达快捷方式，其次匹配小程序通用快捷方式
         """
         desktop_dirs = [
             os.path.join(os.path.expanduser("~"), "Desktop"),
@@ -161,14 +162,20 @@ class WeChatHarvester:
             desktop_dirs.append(os.path.join(userprofile, "Desktop"))
             desktop_dirs.append(os.path.join(userprofile, "桌面"))
 
+        candidates = []
         for d in set(desktop_dirs):
             if os.path.exists(d):
                 for f in os.listdir(d):
                     if f.lower().endswith(".lnk"):
-                        if any(kw in f for kw in keywords):
-                            full_path = os.path.join(d, f)
-                            logger.info(f"找到桌面小程序快捷方式: {full_path}")
-                            return full_path
+                        for idx, kw in enumerate(keywords):
+                            if kw in f:
+                                candidates.append((idx, os.path.join(d, f)))
+                                break
+        if candidates:
+            candidates.sort(key=lambda x: x[0])
+            best_shortcut = candidates[0][1]
+            logger.info(f"找到桌面小程序快捷方式 (优先级匹配): {best_shortcut}")
+            return best_shortcut
         return None
 
     def launch_by_shortcut(self, shortcut_path: str) -> bool:

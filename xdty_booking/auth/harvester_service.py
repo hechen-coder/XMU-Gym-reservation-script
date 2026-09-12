@@ -38,9 +38,37 @@ class HarvestService:
         WeChatHarvester.kill_miniprogram()
         time.sleep(0.5)
 
-        # 2. 启动本地轻量嗅探代理
+        # 2. 启动本地轻量嗅探代理（注入实机存活校验回调，过滤未登录初始握手包）
         logger.info(f"步骤 2/5: 启动本地轻量嗅探代理 (127.0.0.1:{self.proxy_port})...")
-        proxy = SnifferProxy(host="127.0.0.1", port=self.proxy_port)
+        def validate_token(candidate: str) -> bool:
+            try:
+                from xdty_booking.api.client import ApiClient
+                from xdty_booking.api.endpoints import XdtyApi
+                from xdty_booking.auth.session_manager import SessionManager
+                c = ApiClient(base_url=self.config.base_url)
+                c.set_session_token(candidate)
+                api = XdtyApi(c, uid=self.config.auth.uid or None)
+                mgr = SessionManager(api, phpsessid=candidate)
+                return mgr.check_alive()
+            except Exception as e:
+                logger.debug(f"验证 candidate token 异常: {e}")
+                return False
+
+        def on_captured_auth_params(params: dict):
+            try:
+                from xdty_booking.config import save_auth_params
+                save_auth_params(self.config_path, params)
+                self.config.auth.auth_params.update(params)
+                logger.info("💾 已将嗅探到的新 auth_params 实时持久化至配置文件")
+            except Exception as e:
+                logger.warning(f"持久化嗅探到的 auth_params 异常: {e}")
+
+        proxy = SnifferProxy(
+            host="127.0.0.1",
+            port=self.proxy_port,
+            token_validator=validate_token,
+            on_auth_params_captured=on_captured_auth_params
+        )
         try:
             proxy.start()
         except Exception as e:

@@ -67,35 +67,57 @@ class IntervalResponse:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "IntervalResponse":
-        body = data.get("data", {})
-        dates = [DateItem(**d) for d in body.get("date_list", [])]
+        if not isinstance(data, dict):
+            return cls(status=0, info="响应格式异常", venue_id="", date_list=[], time_slot_list=[])
+
+        body = data.get("data")
+        if not isinstance(body, dict):
+            body = {}
+
+        raw_dates = body.get("date_list", [])
+        dates = []
+        if isinstance(raw_dates, list):
+            for d in raw_dates:
+                if isinstance(d, dict):
+                    dates.append(DateItem(**d))
+
         groups = []
-        for g in body.get("time_slot_list", []):
-            slots = [SlotItem(
-                column_id=str(s.get("column_id", "")),
-                date=s.get("date", ""),
-                area_name=s.get("area_name", ""),
-                interval_id=str(s.get("interval_id", "")),
-                price=float(s.get("price", 0)),
-                selected=int(s.get("selected", 0)),
-                select_type=int(s.get("select_type", 1)),
-                max_count=int(s.get("max_count", 0)),
-                status=s.get("status", ""),
-                is_lock=int(s.get("is_lock", 0)),
-                lock_reason=s.get("lock_reason", "")
-            ) for s in g.get("slots", [])]
-            groups.append(TimeSlotGroup(
-                time_range=g.get("time_range", ""),
-                start_time=g.get("start_time", ""),
-                end_time=g.get("end_time", ""),
-                date=g.get("date", ""),
-                week=str(g.get("week", "")),
-                week_name=g.get("week_name", ""),
-                slots=slots
-            ))
+        raw_groups = body.get("time_slot_list", [])
+        if isinstance(raw_groups, list):
+            for g in raw_groups:
+                if not isinstance(g, dict):
+                    continue
+                raw_slots = g.get("slots", [])
+                slots = []
+                if isinstance(raw_slots, list):
+                    for s in raw_slots:
+                        if not isinstance(s, dict):
+                            continue
+                        slots.append(SlotItem(
+                            column_id=str(s.get("column_id", "")),
+                            date=s.get("date", ""),
+                            area_name=s.get("area_name", ""),
+                            interval_id=str(s.get("interval_id", "")),
+                            price=float(s.get("price", 0) or 0),
+                            selected=int(s.get("selected", 0) or 0),
+                            select_type=int(s.get("select_type", 1) or 1),
+                            max_count=int(s.get("max_count", 0) or 0),
+                            status=s.get("status", ""),
+                            is_lock=int(s.get("is_lock", 0) or 0),
+                            lock_reason=s.get("lock_reason", "")
+                        ))
+                groups.append(TimeSlotGroup(
+                    time_range=g.get("time_range", ""),
+                    start_time=g.get("start_time", ""),
+                    end_time=g.get("end_time", ""),
+                    date=g.get("date", ""),
+                    week=str(g.get("week", "")),
+                    week_name=g.get("week_name", ""),
+                    slots=slots
+                ))
         return cls(
-            status=data.get("status", 0),
-            info=data.get("info", ""),
+            status=int(data.get("status", 0)),
+            info=str(data.get("info", "")),
             venue_id=str(body.get("venue_id", "")),
             date_list=dates,
             time_slot_list=groups
@@ -127,3 +149,42 @@ class IntervalResponse:
 
     def find_by_id(self, interval_id: str) -> Optional[Tuple[TimeSlotGroup, SlotItem]]:
         return self.find_slot_with_group(interval_id=str(interval_id))
+
+    def find_nearest_available_slots(
+        self,
+        date: str,
+        preferred_time: str,
+        column_id: Optional[str] = None
+    ) -> List[Tuple[TimeSlotGroup, SlotItem]]:
+        """
+        在指定日期查找所有可用场次（is_available=True 且 remaining_capacity > 0），
+        按场次开始时间与 preferred_time 开始时间的绝对时差（分钟）升序排序返回。
+        """
+        pref_minutes = parse_time_to_minutes(preferred_time)
+        candidates = []
+        for g in self.time_slot_list:
+            if date and g.date != date:
+                continue
+            group_minutes = parse_time_to_minutes(g.start_time or g.time_range)
+            distance = abs(group_minutes - pref_minutes)
+            for slot in g.slots:
+                if column_id and slot.column_id != str(column_id):
+                    continue
+                if slot.is_available and slot.remaining_capacity > 0:
+                    candidates.append((distance, g, slot))
+
+        candidates.sort(key=lambda item: item[0])
+        return [(c[1], c[2]) for c in candidates]
+
+def parse_time_to_minutes(time_str: str) -> int:
+    """将 HH:MM 或 HH:MM-HH:MM 字符串解析为从 00:00 起的分钟数"""
+    if not time_str:
+        return 0
+    start = time_str.split("-")[0].strip()
+    parts = start.split(":")
+    if len(parts) >= 2:
+        try:
+            return int(parts[0]) * 60 + int(parts[1])
+        except ValueError:
+            return 0
+    return 0

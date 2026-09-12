@@ -3,7 +3,7 @@ import json
 import logging
 import random
 import time
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from xdty_booking.api.client import ApiClient
 from xdty_booking.core.models import IntervalResponse
 
@@ -16,6 +16,95 @@ class XdtyApi:
     def __init__(self, client: ApiClient, uid: Optional[str] = None):
         self.client = client
         self._uid = str(uid) if uid else None
+
+    def check_login(self, auth_params: Optional[Dict[str, Any]] = None) -> Tuple[bool, str, Dict[str, Any]]:
+        """
+        方案 A：纯 HTTP 调用 Index/checkLogin 自动续登获取最新 PHPSESSID。
+        
+        :param auth_params: 包含 token, sign, uid, card_id, student_num 等认证上下文的字典
+        :return: (is_success, new_phpsessid, response_data)
+        """
+        if not auth_params:
+            return False, "", {"status": 0, "info": "未提供 auth_params 认证参数"}
+
+        token = auth_params.get("token")
+        if not token:
+            return False, "", {"status": 0, "info": "auth_params 中缺少 token"}
+
+        uid = str(auth_params.get("uid") or self._uid or "")
+        card_id = str(auth_params.get("card_id") or "")
+        student_num = str(auth_params.get("student_num") or card_id)
+        school_id = str(auth_params.get("school_id") or "788")
+        login_type = str(auth_params.get("login_type") or "4")
+        user_type = str(auth_params.get("user_type") or "2")
+        type_val = str(auth_params.get("type") or "1")
+        course_id = str(auth_params.get("course_id") or "0")
+        sign = str(auth_params.get("sign") or "")
+
+        now_ts = int(time.time())
+        nonce = str(auth_params.get("nonce") or random.randint(100000, 999999))
+
+        payload = {
+            "timestamp": now_ts,
+            "nonce": nonce,
+            "course_id": course_id,
+            "uid": uid,
+            "card_id": card_id,
+            "login_type": login_type,
+            "type": type_val,
+            "school_id": school_id,
+            "student_num": student_num,
+            "user_type": user_type,
+            "token": token,
+            "sign": sign,
+            "term_id": "",
+            "id": "",
+        }
+
+        referer = (
+            f"https://xdty.xmu.edu.cn/bdlp_h5_fitness_test/view/stadium/home.html?"
+            f"timestamp={now_ts}&nonce={nonce}&course_id={course_id}&uid={uid}&card_id={card_id}&"
+            f"login_type={login_type}&type={type_val}&school_id={school_id}&student_num={student_num}&"
+            f"user_type={user_type}&token={token}&sign={sign}"
+        )
+
+        # 清理旧的/失效的 PHPSESSID，确保服务端以全新合法会话重新下发 Set-Cookie
+        if "PHPSESSID" in self.client.session.cookies:
+            del self.client.session.cookies["PHPSESSID"]
+
+        try:
+            resp = self.client.post("public/index.php/index/Index/checkLogin", data=payload, referer=referer)
+            res_json = resp.json()
+        except Exception as e:
+            logger.error(f"调用 checkLogin 异常: {e}")
+            return False, "", {"status": -1, "info": str(e)}
+
+        if isinstance(res_json, dict) and res_json.get("status") == 1:
+            # 从响应 Cookie 或 Set-Cookie header 中提取新的 PHPSESSID
+            new_phpsessid = resp.cookies.get("PHPSESSID")
+            if not new_phpsessid:
+                set_cookie_header = resp.headers.get("Set-Cookie", "")
+                import re
+                match = re.search(r"PHPSESSID=([a-zA-Z0-9_\-]+)", set_cookie_header)
+                if match:
+                    new_phpsessid = match.group(1)
+
+            if new_phpsessid:
+                self.client.set_session_token(new_phpsessid)
+                if uid:
+                    self._uid = uid
+                logger.info(f"✅ checkLogin 自动续登成功，获取新 PHPSESSID: {new_phpsessid[:8]}***")
+                return True, new_phpsessid, res_json
+            else:
+                existing_phpsessid = self.client.session.cookies.get("PHPSESSID", "")
+                if existing_phpsessid:
+                    return True, existing_phpsessid, res_json
+                return False, "", {"status": 0, "info": "checkLogin 成功但未下发 PHPSESSID"}
+        else:
+            info = res_json.get("info", "未知错误") if isinstance(res_json, dict) else str(res_json)
+            logger.warning(f"❌ checkLogin 续登失败: {info}")
+            return False, "", res_json
+
 
     def set_uid(self, uid: str):
         """设置当前用户的 UID"""
@@ -60,6 +149,11 @@ class XdtyApi:
         resp = self.client.post("public/index.php/index/Stadium/getCategoryStadium", data={"category_id": category_id})
         return resp.json()
 
+    def get_stadium_details(self, stadium_id: int) -> Dict[str, Any]:
+        """获取场馆详细信息并初始化服务端 Session 的场馆上下文"""
+        resp = self.client.post("public/index.php/index/Stadium/getStadiumDetails", data={"id": stadium_id})
+        return resp.json()
+
     def get_intervals(self, venue_id: int, stadium_id: int, category_id: int = 8, user_range: str = "[67]") -> IntervalResponse:
         """查询场馆各日期和时段空余场次与 interval_id"""
         resp = self.client.post(
@@ -71,7 +165,28 @@ class XdtyApi:
                 "category_id": category_id
             }
         )
-        return IntervalResponse.from_dict(resp.json())
+        res_json = resp.json()
+        # 若服务端 Session 尚未初始化该场馆上下文导致“参数错误”，自动补调 getStadiumDetails 激活上下文并重试
+        if isinstance(res_json, dict) and res_json.get("status") == 0 and "参数错误" in str(res_json.get("info", "")):
+            logger.info(f"getInterval 提示参数错误，自动调用 getStadiumDetails({stadium_id}) 激活服务端会话上下文并重试...")
+            try:
+                details = self.get_stadium_details(stadium_id)
+                ur = details.get("data", {}).get("user_range") if isinstance(details, dict) else None
+                actual_user_range = ur if ur else user_range
+                retry_resp = self.client.post(
+                    "public/index.php/stadium/interval/getInterval",
+                    data={
+                        "venue_id": venue_id,
+                        "stadium_id": stadium_id,
+                        "user_range": actual_user_range,
+                        "category_id": category_id
+                    }
+                )
+                return IntervalResponse.from_dict(retry_resp.json())
+            except Exception as e:
+                logger.warning(f"自动激活场馆上下文异常: {e}")
+
+        return IntervalResponse.from_dict(res_json)
 
     def choose_verify(self, stadium_id: int, venue_id: int, selected_slots: List[Dict[str, Any]], is_academy: int = 1, ids: str = "") -> Dict[str, Any]:
         """选择场次预校验接口 (chooseVerify)"""

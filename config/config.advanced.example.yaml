@@ -1,0 +1,98 @@
+# ==============================================================
+# 厦大体育馆自动预约系统 - 完整高级配置文件模板 (供进阶用户参考)
+# ==============================================================
+# 基础服务地址
+base_url: "https://xdty.xmu.edu.cn/bdlp_h5_fitness_test"
+
+# 认证与保活配置 (方案 A 自动嗅探与心跳保活)
+auth:
+  # 抓包或微信中获取的当前有效 PHPSESSID (若开启 auto_harvest_enabled 可由系统自动捕获更新)
+  phpsessid: ""
+  # 用户 UID (可选，留空则自动通过预约历史接口获取)
+  uid: ""
+  # 心跳保活周期 (秒)，默认 300 秒 (5分钟) 发送一次请求保持 session 不过期
+  heartbeat_interval_seconds: 300
+  # 是否开启 Windows PC 微信静默唤醒与自动截取 (强烈建议开启)
+  auto_harvest_enabled: true
+  wechat_appid: "wx81a2b2fa90759cb7"
+  # 可选：手动指定微信小程序运行核心进程路径 (如为空则自动扫描)
+  wechat_appex_path: ""
+
+  # 方案 A：checkLogin 全 HTTP 自动续登长效凭据 (运行 python main.py harvest 后会自动写入)
+  auth_params:
+    token: ""          # SSO 授权令牌
+    sign: ""           # 对应签名
+    uid: ""            # 用户 UID
+    card_id: ""        # 校园卡号 / 学号
+    student_num: ""    # 学号
+    school_id: 788     # 厦门大学机构代码 (默认 788)
+    login_type: 4      # 登录类型 (H5 小程序通常为 4)
+    type: 1
+    user_type: 2
+    course_id: 0
+
+# 预约目标场地配置
+target:
+  # 常用场馆参数对照：
+  # 【翔安校区健身房】stadium_id: 16, venue_id: 14, category_id: 8, area_id: 67, user_range: "[67]"
+  # 【思明校区健身房】stadium_id: 6, venue_id: 6, category_id: 8, area_id: 0, user_range: "[]"
+  stadium_id: 16
+  venue_id: 14
+  category_id: 8
+  stadium_name: "翔安校区健身房"
+  project_name: "健身房"
+  area_name: "爱秋体育馆健身房"
+  area_id: 67
+  user_range: "[67]"
+  
+  # 预约目标时段与日期偏移
+  # 例如："19:30-21:00"、"18:00-19:30"
+  preferred_time: "19:30-21:00"
+  # 日期偏移量：0 代表预约今天，1 代表预约明天 (默认明天，用于早7点抢次日票)
+  target_date_offset: 1
+
+# 定时抢票与调度配置 (早上 07:00 准点刷新)
+scheduler:
+  # 每天开放抢票的目标时刻 (24小时制，早上七点刷新)
+  target_time: "07:00:00"
+  # 提前探测与预热毫秒数 (防止网络延迟)
+  advance_ms: 200
+  # 失败重试次数
+  retry_count: 5
+  # 重试间隔时间 (毫秒)
+  retry_interval_ms: 150
+  # 首选时段名额不足时，是否自动选取最近的一个可用时间段
+  fallback_nearest: true
+  # 准点前提前多少分钟自检 Session 有效性（若过期自动自愈）
+  pre_check_minutes: 5
+
+# 抢票成功即时通知提醒配置
+notify:
+  # 是否开启抢票成功通知
+  enabled: false
+  # 通道模式: pushplus (微信推送), email (邮件), serverchan (Server酱), bark (iOS锁屏), all (全部启用)
+  channel: "pushplus"
+  # 消息标题前缀
+  title_prefix: "【厦大体育馆预约】"
+
+  # 1. PushPlus 微信推送 (推荐：微信扫码登录 http://www.pushplus.plus/ 获取 token)
+  pushplus:
+    token: ""
+
+  # 2. 邮件 SMTP 通知 (支持 QQ、163、网易、校园邮箱等)
+  email:
+    smtp_host: "smtp.qq.com"
+    smtp_port: 465
+    ssl: true
+    sender: ""
+    password: ""       # 邮箱客户端授权码或密码
+    to_addrs: []       # 接收人邮箱列表，例如: ["your_email@qq.com"]
+
+  # 3. Server酱 Turbo 微信推送 (https://sct.ftqq.com/)
+  serverchan:
+    sendkey: ""
+
+  # 4. Bark (iOS 专用极速锁屏推送)
+  bark:
+    server_url: "https://api.day.app"
+    device_key: ""

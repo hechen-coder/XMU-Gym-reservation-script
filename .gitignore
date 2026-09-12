@@ -4,4 +4,13 @@ __pycache__/
 .pytest_cache/
 config/config.yaml
 captchas/
-
+build/
+dist/
+packaging/
+*.spec
+.github/
+test.py
+tests/
+request/all post request/
+data/
+imgs/

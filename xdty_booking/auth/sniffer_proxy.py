@@ -4,7 +4,7 @@ import socket
 import select
 import logging
 import threading
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Callable
 from xdty_booking.auth.cert_generator import CertGenerator
 
 logger = logging.getLogger(__name__)
@@ -14,17 +14,27 @@ class SnifferProxy:
     轻量级本地透明嗅探代理服务器：
     1. 监听本地端口（默认 127.0.0.1:8889）；
     2. 针对目标域名 xdty.xmu.edu.cn 执行 MITM TLS 解密或 HTTP 嗅探；
-    3. 截获 /v3/api.php/WpLogin/loginByCode 返回的 Set-Cookie: PHPSESSID=...；
+    3. 截获返回或携带的 Set-Cookie/Cookie: PHPSESSID=...；
     4. 对所有非目标域名的流量自动进行透明 TCP 双向直连转发，完全不干扰其他程序；
-    5. 截获到 Token 后立即触发事件通知。
+    5. 支持在线实机验证 token_validator，过滤握手空会话，确认有效后才触发捕获完成。
     """
-    def __init__(self, host: str = "127.0.0.1", port: int = 8889, target_domain: str = "xdty.xmu.edu.cn"):
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8889,
+        target_domain: str = "xdty.xmu.edu.cn",
+        token_validator: Optional[Callable[[str], bool]] = None,
+        on_auth_params_captured: Optional[Callable[[dict], None]] = None
+    ):
         self.host = host
         self.port = port
         self.target_domain = target_domain
+        self.token_validator = token_validator
+        self.on_auth_params_captured = on_auth_params_captured
         self.server_sock: Optional[socket.socket] = None
         self.is_running = False
         self.captured_token: Optional[str] = None
+        self.captured_auth_params: Optional[dict] = None
         self.captured_event = threading.Event()
         self._server_thread: Optional[threading.Thread] = None
 
@@ -194,29 +204,51 @@ class SnifferProxy:
             upstream_ctx = ssl.create_default_context()
             upstream_ctx.check_hostname = False
             upstream_ctx.verify_mode = ssl.CERT_NONE
+            try:
+                upstream_ctx.set_alpn_protocols(["http/1.1"])
+            except Exception:
+                pass
             raw_upstream = socket.create_connection((host, port), timeout=8.0)
             ssl_upstream = upstream_ctx.wrap_socket(raw_upstream, server_hostname=host)
             logger.info("===> 真实上游 TLS 连接成功！")
 
-            # 3. 读取客户端发送的解密后 HTTP 请求
-            request_data = self._read_http_message(ssl_client)
-            if not request_data:
-                logger.warning("===> 未从客户端解密流中读取到 HTTP 请求")
-                return
+            # 3. 循环支持 HTTP/1.1 Keep-Alive 长连接，持续代理并捕获该连接上的所有请求/响应
+            while self.is_running:
+                request_data = self._read_http_message(ssl_client)
+                if not request_data:
+                    break
 
-            req_str = request_data.decode("latin1", errors="ignore")
-            logger.info(f"🎯 [捕获目标请求] {req_str.splitlines()[0] if req_str else ''}")
-            self._inspect_and_extract_cookie(request_data, source="客户端请求")
+                req_str = request_data.decode("latin1", errors="ignore")
+                first_line = req_str.splitlines()[0] if req_str else ""
+                logger.info(f"🎯 [捕获目标请求] {first_line}")
+                self._inspect_and_extract_auth_params(request_data)
+                self._inspect_and_extract_cookie(request_data, source="客户端请求")
 
-            # 4. 发送至真实服务器
-            ssl_upstream.sendall(request_data)
+                # 4. 发送至真实服务器
+                try:
+                    ssl_upstream.sendall(request_data)
+                    # 5. 接收服务器真实响应
+                    response_data = self._read_http_message(ssl_upstream)
+                except Exception as e:
+                    logger.warning(f"与上游真实服务器通信异常: {e}")
+                    break
 
-            # 5. 接收服务器真实响应
-            response_data = self._read_http_message(ssl_upstream)
-            if response_data:
+                if not response_data:
+                    break
+
                 self._inspect_and_extract_cookie(response_data, source="服务端响应")
                 # 6. 将响应转发回客户端
-                ssl_client.sendall(response_data)
+                try:
+                    ssl_client.sendall(response_data)
+                except Exception as e:
+                    logger.warning(f"向客户端发送响应异常: {e}")
+                    break
+
+                # 检查连接关闭指令
+                req_lower = req_str.lower()
+                resp_headers_str = response_data.split(b"\r\n\r\n")[0].decode("latin1", errors="ignore").lower()
+                if "connection: close" in req_lower or "connection: close" in resp_headers_str:
+                    break
 
         except Exception as e:
             logger.error(f"===> MITM 解密流程异常: {e}", exc_info=True)
@@ -249,6 +281,7 @@ class SnifferProxy:
 
         host_name, port = self._parse_host_port(host, 80)
         try:
+            self._inspect_and_extract_auth_params(initial_data)
             upstream_sock = socket.create_connection((host_name, port), timeout=8.0)
             upstream_sock.sendall(initial_data)
 
@@ -266,13 +299,16 @@ class SnifferProxy:
         """从套接字读取完整的 HTTP 头部以及相应的 Body"""
         data = b""
         sock.settimeout(5.0)
-        while b"\r\n\r\n" not in data:
-            chunk = sock.recv(4096)
-            if not chunk:
-                break
-            data += chunk
-            if len(data) > 65536:
-                break
+        try:
+            while b"\r\n\r\n" not in data:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+                if len(data) > 65536:
+                    break
+        except (socket.timeout, OSError):
+            pass
 
         if b"\r\n\r\n" not in data:
             return data
@@ -292,36 +328,89 @@ class SnifferProxy:
 
         if content_length is not None:
             remaining = content_length - len(body_bytes)
-            while remaining > 0:
-                chunk = sock.recv(min(remaining, 4096))
-                if not chunk:
-                    break
-                body_bytes += chunk
-                remaining -= len(chunk)
+            try:
+                while remaining > 0:
+                    chunk = sock.recv(min(remaining, 4096))
+                    if not chunk:
+                        break
+                    body_bytes += chunk
+                    remaining -= len(chunk)
+            except (socket.timeout, OSError):
+                pass
             return header_bytes + b"\r\n\r\n" + body_bytes
 
         # 检查是否为 chunked 传输
         if "transfer-encoding: chunked" in headers_str.lower():
-            while not body_bytes.endswith(b"0\r\n\r\n"):
-                chunk = sock.recv(4096)
-                if not chunk:
-                    break
-                body_bytes += chunk
+            try:
+                while not (b"\r\n0\r\n\r\n" in body_bytes or body_bytes.endswith(b"0\r\n\r\n") or body_bytes == b"0\r\n\r\n"):
+                    chunk = sock.recv(4096)
+                    if not chunk:
+                        break
+                    body_bytes += chunk
+            except (socket.timeout, OSError):
+                pass
             return header_bytes + b"\r\n\r\n" + body_bytes
 
-        return data
+        # 普通无包体请求（如 GET / HEAD，或 304/204 等无 body 响应）
+        return header_bytes + b"\r\n\r\n" + body_bytes
+
+    def _inspect_and_extract_auth_params(self, data: bytes):
+        """检查请求报文（Query 或 Body）中是否存在 checkLogin 续登凭据（token, sign, uid 等）"""
+        try:
+            parts = data.split(b"\r\n\r\n", 1)
+            headers_str = parts[0].decode("latin1", errors="ignore")
+            body_str = parts[1].decode("latin1", errors="ignore") if len(parts) > 1 else ""
+
+            combined = headers_str + "&" + body_str
+            if "token=" in combined and ("checkLogin" in headers_str or "stadium" in headers_str):
+                extracted = {}
+                for field in [
+                    "token", "sign", "uid", "card_id", "student_num",
+                    "school_id", "login_type", "user_type", "type", "course_id"
+                ]:
+                    m = re.search(rf"[?&]{field}=([^&\s\r\n]+)", combined)
+                    if m:
+                        extracted[field] = m.group(1).strip()
+
+                if "token" in extracted and len(extracted["token"]) >= 16:
+                    self.captured_auth_params = extracted
+                    logger.info(
+                        f"🎯 [命中长效凭据] 成功嗅探到 checkLogin 续登参数: "
+                        f"token={extracted['token'][:8]}***, uid={extracted.get('uid', '')}"
+                    )
+                    if self.on_auth_params_captured:
+                        try:
+                            self.on_auth_params_captured(extracted)
+                        except Exception as e:
+                            logger.warning(f"触发 on_auth_params_captured 异常: {e}")
+        except Exception as e:
+            logger.debug(f"解析 auth_params 异常: {e}")
 
     def _inspect_and_extract_cookie(self, data: bytes, source: str = "响应"):
         """检查报文（请求头或响应头）中是否存在 PHPSESSID"""
         try:
             header_part = data.split(b"\r\n\r\n")[0].decode("latin1", errors="ignore")
             # 正则匹配 PHPSESSID
-            match = re.search(r"PHPSESSID=([a-zA-Z0-9]+)", header_part, re.IGNORECASE)
+            match = re.search(r"PHPSESSID=([a-zA-Z0-9_\-]+)", header_part, re.IGNORECASE)
             if match:
                 token = match.group(1)
+                # 若配置了实机有效性校验函数，先探测是否真实具备登录态
+                if self.token_validator:
+                    is_valid = False
+                    try:
+                        is_valid = self.token_validator(token)
+                    except Exception as e:
+                        logger.debug(f"验证候选 Token 异常: {e}")
+
+                    if not is_valid:
+                        logger.info(f"ℹ️ 嗅探到候选 PHPSESSID: {token[:8]}*** ({source})，但实机探测尚未登录就绪（通常是刚启动时的空白握手会话），继续等待...")
+                        return
+                    else:
+                        logger.info(f"✨ 候选 PHPSESSID: {token[:8]}*** 经实机在线探测【确认登录有效】！")
+
                 self.captured_token = token
                 self.captured_event.set()
-                logger.info(f"🎯 [命中] 成功从{source}中嗅探到凭证: PHPSESSID={token}")
+                logger.info(f"🎯 [命中并确认] 成功从{source}中嗅探到有效凭证: PHPSESSID={token}")
         except Exception as e:
             logger.debug(f"解析 {source} Cookie 异常: {e}")
 
