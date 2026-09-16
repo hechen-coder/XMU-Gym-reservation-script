@@ -23,6 +23,15 @@ class CaptchaSolver:
         
         if not use_mock:
             try:
+                # 若运行环境未安装 OpenCV，注入 Mock 模块以防 ddddocr 顶层导入中断
+                import sys
+                import types
+                if "cv2" not in sys.modules:
+                    try:
+                        import cv2  # noqa: F401
+                    except ImportError:
+                        sys.modules["cv2"] = types.ModuleType("cv2")
+
                 import ddddocr
                 self._ocr = ddddocr.DdddOcr(show_ad=False)
                 logger.info("ddddocr 验证码模型初始化成功")

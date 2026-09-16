@@ -6,8 +6,8 @@ config/config.yaml
 captchas/
 build/
 dist/
-packaging/
-*.spec
+logs/
+*.log
 .github/
 test.py
 tests/test.py
