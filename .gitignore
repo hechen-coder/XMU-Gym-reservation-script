@@ -8,7 +8,6 @@ build/
 dist/
 logs/
 *.log
-.github/
 test.py
 tests/test.py
 request/all post request/
