@@ -29,7 +29,7 @@ if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
 os.environ["NO_PROXY"] = "*"
 os.environ["no_proxy"] = "*"
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 APP_NAME = "XMU_Gym_Booking"
 PACKAGING_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(PACKAGING_DIR)
@@ -294,7 +294,7 @@ def build_installer_if_possible() -> str:
         return None
 
     log(f"检测到 Inno Setup 编译器: {iscc}，正在编译安装包向导...")
-    cmd = [iscc, iss_file]
+    cmd = [iscc, f"/DMyAppVersion={VERSION}", iss_file]
     subprocess.check_call(cmd, cwd=PACKAGING_DIR)
 
     setup_exe = os.path.join(DIST_DIR, f"{APP_NAME}_Setup_v{VERSION}.exe")

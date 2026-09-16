@@ -5,7 +5,7 @@
 
 #define MyAppName "厦大体育馆自动预约工具"
 #define MyAppEnglishName "XMU_Gym_Booking"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "XMU Open Source Community"
 #define MyAppURL "https://github.com/hechen-coder/XMU-Gym-reservation-script"
 #define MyAppExeName "XMU_Gym_Booking.exe"
