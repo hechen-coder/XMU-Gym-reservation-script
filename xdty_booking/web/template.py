@@ -1,7 +1,25 @@
 from datetime import datetime, timedelta
+from xdty_booking.security.auth import get_auth_status
 
 def render_dashboard(data: dict) -> str:
     """生成现代化美观响应式的健身房实时空闲状态与一键预约仪表板页面"""
+    # 授权状态检测与处理 (一机一码防护)
+    auth_status = data.get("auth_status") or get_auth_status()
+    is_licensed = auth_status.get("licensed", False)
+    is_dev = auth_status.get("is_dev", False)
+    hwid = auth_status.get("hwid", "")
+    expire_at = auth_status.get("expire_at", "")
+
+    if is_dev:
+        license_badge = '<span class="status-pill" style="background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; cursor: pointer;" onclick="openLicenseModal()" title="源码开发调试环境 · 免密运行">🛠️ 开发免密版</span>'
+    elif is_licensed:
+        exp_short = expire_at[:10] if expire_at else "永久"
+        license_badge = f'<span class="status-pill ok" style="cursor: pointer;" onclick="openLicenseModal()" title="已成功激活 (有效期至: {expire_at})">🛡️ 已授权 ({exp_short})</span>'
+    else:
+        license_badge = '<span class="status-pill warn" style="background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; cursor: pointer; font-weight: 700; animation: pulse 2s infinite;" onclick="openLicenseModal()" title="尚未激活，点击输入激活码">🔒 未激活 (点击激活)</span>'
+
+    license_modal_display = "flex" if (not is_licensed and not is_dev) else "none"
+
     groups = data.get("groups", [])
     stadium_name = data.get("stadium_name", "厦大健身房")
     area_name = data.get("area_name", "")
@@ -919,6 +937,7 @@ def render_dashboard(data: dict) -> str:
             </div>
             <div class="status-bar">
                 <div class="status-group">
+                    {license_badge}
                     {session_badge}
                 </div>
                 {top_bar_actions}
@@ -2037,7 +2056,159 @@ def render_dashboard(data: dict) -> str:
                 }}
             }}
         }}
+
+        function copyHwidCode(code) {{
+            if (navigator.clipboard && navigator.clipboard.writeText) {{
+                navigator.clipboard.writeText(code).then(() => {{
+                    showToast("🎉 机器码已成功复制到剪贴板！");
+                }}).catch(() => {{
+                    _fallbackCopyHwid(code);
+                }});
+            }} else {{
+                _fallbackCopyHwid(code);
+            }}
+        }}
+
+        function _fallbackCopyHwid(text) {{
+            const input = document.getElementById("hwidDisplayInput");
+            if (input) {{
+                input.select();
+                document.execCommand("copy");
+                showToast("🎉 机器码已复制！");
+            }}
+        }}
+
+        function openLicenseModal() {{
+            const modal = document.getElementById("licenseModalOverlay");
+            if (modal) modal.style.display = "flex";
+        }}
+
+        function closeLicenseModal() {{
+            const modal = document.getElementById("licenseModalOverlay");
+            if (modal) modal.style.display = "none";
+        }}
+
+        function handleLicenseFileImport(e) {{
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(evt) {{
+                const input = document.getElementById("licenseCodeInput");
+                if (input) input.value = evt.target.result.trim();
+                showToast("📁 授权文件内容已成功载入！请点击【立即验证并激活】");
+            }};
+            reader.readAsText(file);
+        }}
+
+        async function submitLicenseActivation() {{
+            const codeInput = document.getElementById("licenseCodeInput");
+            const feedback = document.getElementById("licenseFeedbackMsg");
+            const btn = document.getElementById("btnSubmitActivation");
+            const val = codeInput ? codeInput.value.trim() : "";
+
+            if (!val) {{
+                if (feedback) {{
+                    feedback.style.color = "#dc2626";
+                    feedback.innerText = "❌ 请先粘贴激活码或导入 license.lic 文件！";
+                }}
+                return;
+            }}
+
+            if (btn) {{
+                btn.disabled = true;
+                btn.innerText = "⏳ 正在校验数字签名...";
+            }}
+            if (feedback) {{
+                feedback.style.color = "#2563eb";
+                feedback.innerText = "正在校验授权合法性与机器码指纹...";
+            }}
+
+            try {{
+                const res = await fetch("/api/license/activate", {{
+                    method: "POST",
+                    headers: {{ "Content-Type": "application/json" }},
+                    body: JSON.stringify({{ license_key: val }})
+                }});
+                const data = await res.json();
+                if (data.success) {{
+                    if (feedback) {{
+                        feedback.style.color = "#16a34a";
+                        feedback.innerText = data.info || "🎉 激活成功！";
+                    }}
+                    showToast(data.info || "🎉 激活成功！正在解锁系统...");
+                    setTimeout(() => {{
+                        window.location.reload();
+                    }}, 1200);
+                }} else {{
+                    if (feedback) {{
+                        feedback.style.color = "#dc2626";
+                        feedback.innerText = "❌ " + (data.info || "激活失败，请核对后重试");
+                    }}
+                    if (btn) {{
+                        btn.disabled = false;
+                        btn.innerText = "🚀 立即验证并激活";
+                    }}
+                }}
+            }} catch (err) {{
+                if (feedback) {{
+                    feedback.style.color = "#dc2626";
+                    feedback.innerText = "❌ 请求异常: " + err.message;
+                }}
+                if (btn) {{
+                    btn.disabled = false;
+                    btn.innerText = "🚀 立即验证并激活";
+                }}
+            }}
+        }}
     </script>
+
+    <!-- 软件授权中心弹窗 (一机一码防护) -->
+    <div id="licenseModalOverlay" class="custom-dialog-overlay" style="display: {license_modal_display}; z-index: 3000;">
+        <div class="custom-dialog-card" style="max-width: 500px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid #f1f5f9; padding-bottom: 12px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 22px;">🔒</span>
+                    <h3 style="margin: 0; font-size: 17px; font-weight: 700; color: #0f172a;">软件授权与激活中心</h3>
+                </div>
+                <button type="button" onclick="closeLicenseModal()" style="background: none; border: none; font-size: 22px; color: #94a3b8; cursor: pointer; padding: 4px; line-height: 1;">&times;</button>
+            </div>
+
+            <div style="margin-bottom: 16px;">
+                <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">
+                    💻 本机唯一设备机器码 (HWID):
+                </label>
+                <div style="display: flex; gap: 8px;">
+                    <input type="text" id="hwidDisplayInput" value="{hwid}" readonly class="form-input" style="font-family: monospace; font-size: 14px; font-weight: 700; text-align: center; background: #f8fafc; letter-spacing: 1px; color: #1e293b;">
+                    <button type="button" class="btn-action btn-primary" onclick="copyHwidCode('{hwid}')" style="white-space: nowrap; font-weight: 600; padding: 8px 14px;">
+                        📋 一键复制
+                    </button>
+                </div>
+                <p style="font-size: 12px; color: #64748b; margin-top: 6px; line-height: 1.5;">
+                    💡 本软件已启用“一机一码”硬件绑定防护。请点击【一键复制】机器码，发送给作者获取您的专属授权文件 (license.lic) 或激活码。
+                </p>
+            </div>
+
+            <div style="margin-bottom: 16px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                    <label style="font-size: 13px; font-weight: 700; color: #334155;">🔑 粘贴文本激活码 或 导入文件：</label>
+                    <label class="btn-action" style="cursor: pointer; font-size: 12px; padding: 4px 10px; display: inline-flex; align-items: center; gap: 4px;">
+                        📁 导入 license.lic
+                        <input type="file" accept=".lic,.txt,.json" style="display: none;" onchange="handleLicenseFileImport(event)">
+                    </label>
+                </div>
+                <textarea id="licenseCodeInput" placeholder="请在此处直接粘贴作者微信发给您的长串激活码文本，或者点击上方【导入 license.lic】文件..." rows="3" class="form-input" style="font-family: monospace; font-size: 12px; resize: vertical; line-height: 1.4;"></textarea>
+            </div>
+
+            <div id="licenseFeedbackMsg" style="margin-bottom: 14px; font-size: 13px; text-align: center; min-height: 20px; font-weight: 600;"></div>
+
+            <div style="display: flex; gap: 10px;">
+                <button type="button" class="btn-action" onclick="closeLicenseModal()" style="flex: 1; padding: 9px;">关闭</button>
+                <button type="button" id="btnSubmitActivation" class="dialog-btn-confirm success" onclick="submitLicenseActivation()" style="flex: 2; padding: 9px; font-size: 14px; font-weight: 700; border-radius: 8px; cursor: pointer; border: none;">
+                    🚀 立即验证并激活
+                </button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
 """

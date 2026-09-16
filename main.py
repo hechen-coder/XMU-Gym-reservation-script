@@ -209,6 +209,26 @@ def main():
     harvester = WeChatHarvester(appid=cfg.auth.wechat_appid)
     notifier = Notifier(cfg.notify)
 
+    # 授权防护拦截：对于执行预约、抢票、秒杀等商业核心功能，在客户发布版下强控授权
+    if args.action in ("schedule", "book", "snipe", "harvest", "relogin"):
+        from xdty_booking.security.auth import check_license
+        from xdty_booking.security.hwid import copy_hwid_to_clipboard
+        auth_res = check_license()
+        if not auth_res.is_licensed:
+            copy_hwid_to_clipboard()
+            print("\n" + "=" * 72)
+            print("                【软件未授权激活提示】")
+            print("  当前客户端尚未激活或授权已到期，无法执行预约抢票与秒杀功能。")
+            print(f"  本机唯一机器识别码 (HWID): {auth_res.hwid}")
+            print("  (已自动将机器码复制至剪贴板，可直接在微信/QQ中粘贴发送给作者)")
+            print("-" * 72)
+            print("  【激活方法】：")
+            print("  1. 请将上方机器码发送给作者获取您的专属授权文件 (license.lic) 或激活码。")
+            print("  2. 将获得的 license.lic 放入程序同级目录下即可直接生效；")
+            print("     或者双击运行【启动网页版.bat】，在弹出的网页激活窗口中粘贴激活码。")
+            print("=" * 72 + "\n")
+            sys.exit(1)
+
     # 3. 分发执行操作
     if args.action == "check":
         logger.info("正在检测当前 Session 登录态与有效性...")

@@ -58,11 +58,22 @@ if os.path.exists(w_lib):
 
 print(f"[*] Collected pywebview native components: {[os.path.basename(x[0]) for x in webview_datas]}")
 
+# 动态收集 xdty_booking/security 下的原生动态库 (如 pyarmor_runtime.pyd)
+sec_binaries = []
+sec_path = os.path.join(PROJECT_ROOT, "xdty_booking", "security")
+if os.path.exists(sec_path):
+    for root, dirs, files in os.walk(sec_path):
+        for f in files:
+            if f.endswith((".pyd", ".dll")):
+                full_p = os.path.join(root, f)
+                rel_dir = os.path.relpath(root, PROJECT_ROOT)
+                sec_binaries.append((full_p, rel_dir))
+
 # 组装数据文件
 datas = [
     (os.path.join(PROJECT_ROOT, "config", "config.example.yaml"), "config"),
     (os.path.join(SPEC_DIR, "app_icon.ico"), "."),
-] + onnx_datas + webview_datas
+] + onnx_datas + webview_datas + sec_binaries
 
 # 包含的高级配置模板（如果存在）
 adv_cfg = os.path.join(PROJECT_ROOT, "config", "config.advanced.example.yaml")
@@ -101,6 +112,10 @@ hidden_imports = [
     "xdty_booking.web",
     "xdty_booking.web.server",
     "xdty_booking.web.template",
+    "xdty_booking.security",
+    "xdty_booking.security.auth",
+    "xdty_booking.security.hwid",
+    "rsa",
     "ddddocr",
     "onnxruntime",
     "PIL",

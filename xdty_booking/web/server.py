@@ -24,6 +24,12 @@ from xdty_booking.notify.notifier import Notifier
 from xdty_booking.web.template import render_dashboard, render_qr_login_page
 from xdty_booking.utils.logger import setup_logger
 from cas_qr_login.cas_client import CasQrLoginClient
+from xdty_booking.security.auth import (
+    check_license,
+    activate_license,
+    get_auth_status,
+    is_dev_mode
+)
 
 logger = setup_logger("xdty_web")
 
@@ -444,6 +450,7 @@ def query_gym_status(config_path: Optional[str] = None, auto_heal: bool = True) 
         "groups": [],
         "scheduler_status": _scheduler_manager.get_status(),
         "snipe_status": _snipe_manager.get_status(),
+        "auth_status": get_auth_status(),
         "target_config": {
             "stadium_name": cfg.target.stadium_name,
             "stadium_id": cfg.target.stadium_id,
@@ -590,6 +597,37 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                 pass
         if not params:
             params = parse_qs(parsed.query)
+
+        # 0. 授权激活专属 API (免拦截)
+        if parsed.path.startswith("/api/license/activate"):
+            key_data = (
+                body_json.get("license_key")
+                or body_json.get("code")
+                or (params.get("license_key", [None])[0] if params.get("license_key") else None)
+            )
+            if not key_data and content_len > 0:
+                try:
+                    key_data = body
+                except Exception:
+                    pass
+            ok, msg = activate_license(key_data)
+            self._send_json(200, {
+                "success": ok,
+                "info": msg,
+                "status": get_auth_status()
+            })
+            return
+
+        # 针对打包客户端发布版的业务 API 强控守卫拦截 (开发模式自动放行)
+        auth_res = check_license()
+        if not auth_res.is_licensed:
+            self._send_json(403, {
+                "success": False,
+                "error": "LICENSE_REQUIRED",
+                "info": f"当前软件未激活或授权已到期！请先在界面完成激活。本机机器码: {auth_res.hwid}",
+                "hwid": auth_res.hwid
+            })
+            return
 
         if parsed.path.startswith("/api/book"):
             self._handle_book(params)
@@ -889,7 +927,24 @@ class GymStatusHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
-        
+
+        # 0. 授权状态查询专属 API
+        if path.startswith("/api/license/status"):
+            self._send_json(200, get_auth_status())
+            return
+
+        # 针对会产生预约或续登行为的 GET API 进行客户端未激活拦截
+        if any(path.startswith(prefix) for prefix in ("/api/book", "/api/relogin", "/api/harvest")):
+            auth_res = check_license()
+            if not auth_res.is_licensed:
+                self._send_json(403, {
+                    "success": False,
+                    "error": "LICENSE_REQUIRED",
+                    "info": f"当前软件未激活或授权已到期！请先在界面完成激活。本机机器码: {auth_res.hwid}",
+                    "hwid": auth_res.hwid
+                })
+                return
+
         # 1. 一键预约 API
         if path.startswith("/api/book"):
             params = parse_qs(parsed.query)

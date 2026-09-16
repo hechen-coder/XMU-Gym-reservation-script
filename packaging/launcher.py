@@ -125,6 +125,8 @@ def interactive_menu():
                 cli_main()
             except KeyboardInterrupt:
                 print("\n定时任务已取消。")
+            except SystemExit:
+                input("\n按回车键返回主菜单...")
             continue
 
         elif choice == "3":
@@ -132,6 +134,8 @@ def interactive_menu():
             sys.argv = [sys.argv[0], "harvest"]
             try:
                 cli_main()
+            except SystemExit:
+                pass
             except Exception as e:
                 print(f"执行出错: {e}")
             input("\n按回车键返回主菜单...")
@@ -141,6 +145,8 @@ def interactive_menu():
             sys.argv = [sys.argv[0], "query"]
             try:
                 cli_main()
+            except SystemExit:
+                pass
             except Exception as e:
                 print(f"查询出错: {e}")
             input("\n按回车键返回主菜单...")
@@ -150,6 +156,8 @@ def interactive_menu():
             sys.argv = [sys.argv[0], "check"]
             try:
                 cli_main()
+            except SystemExit:
+                pass
             except Exception as e:
                 print(f"检测出错: {e}")
             input("\n按回车键返回主菜单...")
@@ -161,6 +169,8 @@ def interactive_menu():
                 cli_main()
             except KeyboardInterrupt:
                 print("\n捡漏已停止。")
+            except SystemExit:
+                pass
             input("\n按回车键返回主菜单...")
 
         elif choice == "7":

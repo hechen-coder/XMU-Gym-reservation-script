@@ -71,6 +71,25 @@ def check_and_install_dependencies():
         subprocess.check_call(cmd)
         log("pywebview 安装成功！")
 
+    try:
+        import rsa
+        log("已检测到 rsa 非对称加密签名库")
+    except ImportError:
+        log("未检测到 rsa 库，正在自动安装...")
+        cmd = [sys.executable, "-m", "pip", "install", "rsa", "-i", "https://pypi.tuna.tsinghua.edu.cn/simple"]
+        subprocess.check_call(cmd)
+        log("rsa 安装成功！")
+
+    try:
+        import pyarmor
+        log("已检测到 pyarmor 安全混淆防护引擎")
+    except ImportError:
+        log("未检测到 pyarmor，正在自动安装...")
+        cmd = [sys.executable, "-m", "pip", "install", "pyarmor", "-i", "https://pypi.tuna.tsinghua.edu.cn/simple"]
+        subprocess.check_call(cmd)
+        log("pyarmor 安装成功！")
+
+
 
 def clean_build_artifacts():
     """清理历史构建缓存与目录"""
@@ -110,6 +129,69 @@ def run_pyinstaller():
     log("PyInstaller 编译完成！")
 
 
+def protect_and_run_pyinstaller():
+    """在打包构建前对 security 安全授权核心实施 PyArmor 防逆向混淆加密，构建完成后自动还原源码"""
+    sec_dir = os.path.join(PROJECT_ROOT, "xdty_booking", "security")
+    backup_dir = os.path.join(PROJECT_ROOT, "xdty_booking", "security_source_backup")
+    obf_out_dir = os.path.join(PROJECT_ROOT, "build", "obf_sec")
+    saved_runtime_backup = os.path.join(PROJECT_ROOT, "build", "saved_pyarmor_runtime")
+
+    use_obf = False
+    try:
+        log("正在调用 PyArmor 对核心安全授权模块执行防逆向加密与字节码混淆...")
+        if os.path.exists(obf_out_dir):
+            shutil.rmtree(obf_out_dir)
+        os.makedirs(obf_out_dir, exist_ok=True)
+
+        # 核心关键参数：必须使用 -i 将 runtime 模块自包含在 security 内部，避免顶层导入丢失
+        cmd = [sys.executable, "-m", "pyarmor.cli", "gen", "-i", "-O", obf_out_dir, "-r", sec_dir]
+        subprocess.check_call(cmd, stdout=subprocess.DEVNULL)
+
+        obf_pkg_dir = os.path.join(obf_out_dir, "security")
+
+        if os.path.exists(obf_pkg_dir):
+            # 1. 备份原明文源码
+            if os.path.exists(backup_dir):
+                shutil.rmtree(backup_dir)
+            shutil.copytree(sec_dir, backup_dir)
+
+            # 2. 拷贝并保留一份 pyarmor_runtime 供构建后处理兜底复制
+            for item in os.listdir(obf_pkg_dir):
+                if item.startswith("pyarmor_runtime"):
+                    r_src = os.path.join(obf_pkg_dir, item)
+                    if os.path.exists(saved_runtime_backup):
+                        shutil.rmtree(saved_runtime_backup)
+                    shutil.copytree(r_src, saved_runtime_backup)
+
+            # 3. 覆盖混淆后的完整目录 (包含 pyarmor_runtime_xxxxxx 及其 .pyd) 到 security
+            shutil.rmtree(sec_dir)
+            shutil.copytree(obf_pkg_dir, sec_dir)
+
+            use_obf = True
+            log("核心安全授权模块已成功转换为自包含加密字节码与原生 DLL 保护！")
+    except Exception as e:
+        log(f"安全混淆处理警告 (将以标准模式打包): {e}")
+
+    try:
+        run_pyinstaller()
+    finally:
+        if use_obf and os.path.exists(backup_dir):
+            log("正在无缝还原开发环境安全模块源代码...")
+            try:
+                shutil.rmtree(sec_dir)
+                shutil.copytree(backup_dir, sec_dir)
+                shutil.rmtree(backup_dir)
+            except Exception as e:
+                log(f"还原源码警告: {e}")
+
+            if os.path.exists(obf_out_dir):
+                try:
+                    shutil.rmtree(obf_out_dir)
+                except Exception:
+                    pass
+            log("开发源码环境已自动 100% 恢复如初！")
+
+
 def post_process_portable_distribution():
     """完善免安装便携版目录，写入快捷批处理启动器"""
     log("正在后处理便携版分发目录...")
@@ -143,6 +225,24 @@ def post_process_portable_distribution():
     icon_src = os.path.join(PACKAGING_DIR, "app_icon.ico")
     if os.path.exists(icon_src):
         shutil.copy2(icon_src, os.path.join(TARGET_DIR, "app_icon.ico"))
+
+    # 5. 确保 pyarmor_runtime 动态库在打包产物中完整就绪 (双重路径保障)
+    saved_runtime_backup = os.path.join(PROJECT_ROOT, "build", "saved_pyarmor_runtime")
+    if os.path.exists(saved_runtime_backup):
+        runtime_name = "pyarmor_runtime_000000"
+        # 路径 A: _internal/xdty_booking/security/pyarmor_runtime_000000 (自包含相对导入)
+        dst_a = os.path.join(TARGET_DIR, "_internal", "xdty_booking", "security", runtime_name)
+        os.makedirs(dst_a, exist_ok=True)
+        for f in os.listdir(saved_runtime_backup):
+            shutil.copy2(os.path.join(saved_runtime_backup, f), os.path.join(dst_a, f))
+
+        # 路径 B: _internal/pyarmor_runtime_000000 (顶层绝对导入兜底)
+        dst_b = os.path.join(TARGET_DIR, "_internal", runtime_name)
+        os.makedirs(dst_b, exist_ok=True)
+        for f in os.listdir(saved_runtime_backup):
+            shutil.copy2(os.path.join(saved_runtime_backup, f), os.path.join(dst_b, f))
+
+        log("PyArmor 原生防护运行时 DLL 已成功注入打包产物目录！")
 
     log(f"便携版目录就绪 (已完成极简精简): {TARGET_DIR}")
 
@@ -237,7 +337,7 @@ def main():
     try:
         check_and_install_dependencies()
         clean_build_artifacts()
-        run_pyinstaller()
+        protect_and_run_pyinstaller()
         post_process_portable_distribution()
         make_portable_zip()
         build_installer_if_possible()
