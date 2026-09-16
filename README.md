@@ -140,7 +140,7 @@ target:
 #### 2. 启动定时挂机任务
 - **绿色版用户**：直接页面的下方自动化功能栏点击定时预约：
 
-  ![image-20260916212825147](C:\Users\86176\AppData\Roaming\Typora\typora-user-images\image-20260916212825147.png)
+  ![image-20260916212825147](images/image-20260916212825147.png)
 
 - **源码用户**：在终端中输入下方命令，或者在web页面使用定时预约功能
   
@@ -231,7 +231,7 @@ target:
 
 ### Q5: 有其他疑问或者bug？欢迎提交isuues或者入群交流
 
-> ![image-20260916223451140](C:\Users\86176\AppData\Roaming\Typora\typora-user-images\image-20260916223451140.png)
+> ![image-20260916223451140](images/image-20260916223451140.png)
 
 
 
