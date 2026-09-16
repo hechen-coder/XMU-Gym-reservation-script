@@ -12,6 +12,13 @@ import os
 import sys
 import glob
 
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # 动态获取项目根目录
 SPEC_DIR = os.path.dirname(os.path.abspath(SPEC))
 PROJECT_ROOT = os.path.abspath(os.path.join(SPEC_DIR, ".."))
@@ -30,7 +37,7 @@ else:
     for p in glob.glob(os.path.join(ddddocr_dir, "*.onnx")):
         onnx_datas.append((p, "ddddocr"))
 
-print(f"[*] 成功收集到 ddddocr 模型文件: {[os.path.basename(x[0]) for x in onnx_datas]}")
+print(f"[*] Collected ddddocr models: {[os.path.basename(x[0]) for x in onnx_datas]}")
 
 # 动态收集 pywebview 的 WebView2 与 WinForms 原生库，杜绝打包后找不到 DLL
 import webview
@@ -49,7 +56,7 @@ if os.path.exists(w_lib):
         webview_datas.append((native_loader, "runtimes/win-x64/native"))
         webview_datas.append((native_loader, "webview/lib/runtimes/win-x64/native"))
 
-print(f"[*] 成功收集到 pywebview 原生组件: {[os.path.basename(x[0]) for x in webview_datas]}")
+print(f"[*] Collected pywebview native components: {[os.path.basename(x[0]) for x in webview_datas]}")
 
 # 组装数据文件
 datas = [

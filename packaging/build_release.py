@@ -104,7 +104,9 @@ def run_pyinstaller():
         f"--workpath={BUILD_DIR}",
         spec_file
     ]
-    subprocess.check_call(cmd, cwd=PROJECT_ROOT)
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    subprocess.check_call(cmd, cwd=PROJECT_ROOT, env=env)
     log("PyInstaller 编译完成！")
 
 
