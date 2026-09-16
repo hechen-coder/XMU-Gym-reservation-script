@@ -1,17 +1,33 @@
+# Python 字节码与测试缓存
 __pycache__/
 *.py[cod]
-*.class
+*$py.class
 .pytest_cache/
-config/config.yaml
-captchas/
+
+# 编译与打包产物 (严禁推送到公开仓库)
 build/
 dist/
+*.pyd
+*.c
+xdty_booking/security_source_backup/
+
+# 敏感配置、商业授权与密钥保护 (严禁推送到公开仓库)
+config/config.yaml
+license.lic
+data/
+tools/developer_private_key.pem
+tools/client_public_key.pem
+
+# 运行时日志、验证码临时文件与抓包会话
 logs/
 *.log
+captchas/
+request/
+
+# 二进制大型媒体资源 (防泄密与防仓库体积膨胀)
+images/*.mp4
+
+# 临时开发测试脚本
+test/
 test.py
 tests/test.py
-request/all post request/
-request/统一身份认证/
-request/统一验证登录扫码 全流程/
-data/
-imgs/
