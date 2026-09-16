@@ -29,7 +29,7 @@ if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
 os.environ["NO_PROXY"] = "*"
 os.environ["no_proxy"] = "*"
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 APP_NAME = "XMU_Gym_Booking"
 PACKAGING_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(PACKAGING_DIR)
@@ -79,6 +79,15 @@ def check_and_install_dependencies():
         cmd = [sys.executable, "-m", "pip", "install", "rsa", "-i", "https://pypi.tuna.tsinghua.edu.cn/simple"]
         subprocess.check_call(cmd)
         log("rsa 安装成功！")
+
+    try:
+        import cryptography
+        log("已检测到 cryptography 证书加密库")
+    except ImportError:
+        log("未检测到 cryptography 库，正在自动安装...")
+        cmd = [sys.executable, "-m", "pip", "install", "cryptography", "-i", "https://pypi.tuna.tsinghua.edu.cn/simple"]
+        subprocess.check_call(cmd)
+        log("cryptography 安装成功！")
 
     try:
         import pyarmor

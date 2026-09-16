@@ -17,10 +17,19 @@ if sys.platform == "win32":
         except Exception:
             pass
 
-from cryptography import x509
-from cryptography.x509.oid import NameOID
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+try:
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    HAS_CRYPTOGRAPHY = True
+except ImportError:
+    HAS_CRYPTOGRAPHY = False
+    x509 = None
+    NameOID = None
+    hashes = None
+    serialization = None
+    rsa = None
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +50,11 @@ class CertGenerator:
         """
         生成带有 Subject Alternative Name (SAN) 的私钥与证书文件，返回 (cert_path, key_path)
         """
+        if not HAS_CRYPTOGRAPHY:
+            raise ImportError(
+                "未检测到 cryptography 证书加密库，透明嗅探代理证书生成失败！\n"
+                "请确保已正确安装依赖: pip install cryptography"
+            )
         # 1. 优先尝试探测本机是否已有系统受信任的抓包 CA（如 Reqable）
         reqable_bin = os.path.expandvars(r"%APPDATA%\Reqable\certificate\capture.bin")
         if os.path.exists(reqable_bin):
