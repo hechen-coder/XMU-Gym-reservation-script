@@ -1,8 +1,9 @@
 import sys
 import time
 import logging
+import threading
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Callable
 
 from xdty_booking.config import AppConfig
 from xdty_booking.api.client import ApiClient
@@ -69,6 +70,16 @@ class BookingScheduler:
         self.config_path = config_path
         self.notifier = notifier or Notifier(config.notify)
         self.harvest_service = HarvestService(config, config_path=config_path)
+        self._stop_event = threading.Event()
+        self.status_callback: Optional[Callable[[str], None]] = None
+
+    def stop(self):
+        """手动取消/停止定时调度守护"""
+        logger.info("🛑 收到手动停止定时预约请求...")
+        self._stop_event.set()
+        set_windows_keep_awake(False)
+        if self.status_callback:
+            self.status_callback("已手动停止定时任务")
 
     def ensure_valid_session(self, timeout: float = 30.0) -> bool:
         """检查并确保登录态有效，若失效先尝试纯 HTTP 续登，失败后再触发微信小程序嗅探捕获"""
@@ -111,6 +122,8 @@ class BookingScheduler:
             return False
 
     def run(self, target_time: Optional[str] = None) -> Dict[str, Any]:
+        if self._stop_event.is_set():
+            return {"success": False, "info": "定时任务已被手动终止"}
         target_time_str = target_time or self.cfg.scheduler.target_time or "07:00:00"
         logger.info(f"🚀 启动早间高精度定时抢票守护服务，目标时刻: 每日 [{target_time_str}]")
 
@@ -131,6 +144,8 @@ class BookingScheduler:
             
             logger.info(f"📅 下一个目标抢票时刻: {target_dt.strftime('%Y-%m-%d %H:%M:%S')}")
             logger.info(f"⏱️ 提前自检预热时刻: {pre_check_dt.strftime('%Y-%m-%d %H:%M:%S')} (提前 {pre_check_minutes} 分钟)")
+            if self.status_callback:
+                self.status_callback(f"定时守护中：目标抢票时刻 {target_dt.strftime('%m-%d %H:%M:%S')}，将在 {pre_check_dt.strftime('%H:%M:%S')} 预检凭据")
 
             # 1. 如果当前距离预检时间尚早，进入纯静默休眠（免打扰，不发心跳、不弹微信、不改代理）
             if datetime.now() < pre_check_dt:
@@ -142,6 +157,9 @@ class BookingScheduler:
 
                 last_report_time = time.time()
                 while datetime.now() < pre_check_dt:
+                    if self._stop_event.is_set():
+                        logger.info("🛑 接收到终止信号，退出定时守护模式")
+                        return {"success": False, "info": "定时任务已被手动终止"}
                     wait_secs = (pre_check_dt - datetime.now()).total_seconds()
                     if wait_secs <= 0:
                         break
@@ -149,29 +167,50 @@ class BookingScheduler:
                     if time.time() - last_report_time >= 1800 and wait_secs > 600:
                         logger.info(f"⏳ 静默守护中... 距离预检自愈还有 {int(wait_secs // 60)} 分钟 (目标预检时刻: {pre_check_dt.strftime('%H:%M:%S')})")
                         last_report_time = time.time()
-                    sleep_step = min(60.0, max(1.0, wait_secs))
-                    time.sleep(sleep_step)
+                    if self.status_callback:
+                        self.status_callback(f"静默休眠中，将在 {pre_check_dt.strftime('%H:%M:%S')} 进行预检自愈 (距抢票 {int((target_ts - datetime.now().timestamp()) // 60)} 分钟)")
+                    sleep_step = min(10.0, max(0.5, wait_secs))
+                    if self._stop_event.wait(sleep_step):
+                        return {"success": False, "info": "定时任务已被手动终止"}
+
+            if self._stop_event.is_set():
+                return {"success": False, "info": "定时任务已被手动终止"}
 
             # 2. 到达预检时刻：仅在此刻全面执行 Session 存活探测与失效自愈 (此时捕获的凭证最新鲜有效)
             logger.info(f"🔍 到达抢票前预检时刻 ({datetime.now().strftime('%H:%M:%S')})，检查凭证有效性...")
+            if self.status_callback:
+                self.status_callback("到达抢票前预检时刻，正在检查并自愈 Session 凭据...")
             valid = self.ensure_valid_session()
             if not valid:
                 logger.error("⚠️ 提前预检自愈未成功，抢票将按当前状态继续尝试")
 
             # 3. 冲刺等待期：在准点前 30 秒进行高精度服务端毫秒时间差校准
             while (target_ts - datetime.now().timestamp()) > 35.0:
-                time.sleep(1.0)
+                if self._stop_event.wait(1.0):
+                    return {"success": False, "info": "定时任务已被手动终止"}
+
+            if self._stop_event.is_set():
+                return {"success": False, "info": "定时任务已被手动终止"}
 
             logger.info("正在与厦大体育馆服务器校准高精度时间差...")
+            if self.status_callback:
+                self.status_callback("正在与厦大体育馆服务器进行毫秒级高精度对时...")
             time_offset = TimeSync.get_server_time_offset(self.cfg.base_url)
 
             # 4. 高精度等待直至准点时刻 (提前 advance_ms 毫秒)
             remaining = target_ts - datetime.now().timestamp()
             logger.info(f"距离准点放票还剩 {remaining:.2f} 秒，进入毫秒级高精度等待...")
+            if self.status_callback:
+                self.status_callback(f"距离放票还剩 {remaining:.1f} 秒，进入突发就绪状态...")
             TimeSync.wait_until(target_ts, offset=time_offset, advance_ms=self.cfg.scheduler.advance_ms)
+
+            if self._stop_event.is_set():
+                return {"success": False, "info": "定时任务已被手动终止"}
 
             # 5. 准点瞬间：极速并发抢票！
             logger.info(f"⚡ [准点] {datetime.now().strftime('%H:%M:%S')} 到达放号时刻！立即执行极速抢票！")
+            if self.status_callback:
+                self.status_callback("⚡ 到达放票时刻！正在极速提交预约订单...")
             engine = BookingEngine(
                 api=self.api,
                 captcha_solver=self.solver,
@@ -186,8 +225,12 @@ class BookingScheduler:
             
             if res.get("success"):
                 logger.info(f"🎉 准点抢票大获全胜: {res.get('info')}")
+                if self.status_callback:
+                    self.status_callback(f"🎉 准点抢票成功！{res.get('info')}")
             else:
                 logger.error(f"准点抢票结果: {res.get('info')}")
+                if self.status_callback:
+                    self.status_callback(f"⚠️ 准点抢票结束: {res.get('info')}")
 
             return res
         finally:

@@ -1,5 +1,6 @@
 import time
 import logging
+import threading
 from typing import Dict, Any, Optional, Callable
 from datetime import datetime, timedelta
 from xdty_booking.api.endpoints import XdtyApi
@@ -273,7 +274,10 @@ class BookingEngine:
                 err = f"未找到指定时段场次: 日期 {target_date_str}, 时段 {target_time_str}"
                 logger.error(err)
                 return {"success": False, "info": err}
-            msg = f"该时段目前无空闲名额 (已约满 {slot.selected}/{slot.max_count})"
+            if getattr(slot, "is_locked", False) or slot.status == "locked" or (slot.selected == 0 and not slot.is_available):
+                msg = f"该时段为教学排课占用，暂不对外开放个人预约 (0/{slot.max_count})"
+            else:
+                msg = f"该时段目前无空闲名额 (已约满 {slot.selected}/{slot.max_count})"
             logger.warning(msg)
             return {"success": False, "info": msg, "slot": slot, "full": True}
 
@@ -315,7 +319,9 @@ class BookingEngine:
         interval_id: Optional[str] = None,
         poll_interval: float = 2.0,
         max_duration_seconds: int = 86400,
-        fallback_nearest: bool = False
+        fallback_nearest: bool = False,
+        stop_event: Optional[threading.Event] = None,
+        status_callback: Optional[Callable[[int, str], None]] = None
     ) -> Dict[str, Any]:
         """
         实时监听捡漏秒杀模式：
@@ -329,7 +335,14 @@ class BookingEngine:
         logger.info(f"🚀 已启动捡漏监听模式 (目标: {target_date_str} {target_time_str}, 轮询间隔: {poll_interval}秒)...")
 
         while time.time() - start_time < max_duration_seconds:
+            if stop_event and stop_event.is_set():
+                logger.info("🛑 接收到终止信号，退出捡漏监听模式")
+                return {"success": False, "info": "捡漏监听已手动停止"}
+
             attempt += 1
+            if status_callback:
+                status_callback(attempt, f"第 {attempt} 次检测：正在探测退票名额...")
+
             res = self.execute_booking(
                 target_date=target_date,
                 preferred_time=preferred_time,
@@ -340,6 +353,8 @@ class BookingEngine:
             )
             if res.get("success"):
                 logger.info(f"🎉 捡漏成功！已完成预约: {res.get('info')}")
+                if status_callback:
+                    status_callback(attempt, f"🎉 捡漏成功: {res.get('info')}")
                 return res
 
             if not res.get("full"):
@@ -352,7 +367,11 @@ class BookingEngine:
                         healed = self.on_session_expired()
                         if healed:
                             logger.info("✅ 捡漏监听 Session 自愈成功，继续监听！")
-                            time.sleep(poll_interval)
+                            if stop_event:
+                                if stop_event.wait(poll_interval):
+                                    return {"success": False, "info": "捡漏监听已手动停止"}
+                            else:
+                                time.sleep(poll_interval)
                             continue
                     except Exception as he:
                         logger.error(f"自愈过程异常: {he}")
@@ -363,6 +382,11 @@ class BookingEngine:
             jitter = (attempt % 5) * 0.1
             if attempt % 30 == 0:
                 logger.info(f"已持续监听 {attempt} 次，目标时段暂无退票，继续监控中...")
-            time.sleep(poll_interval + jitter)
+
+            if stop_event:
+                if stop_event.wait(poll_interval + jitter):
+                    return {"success": False, "info": "捡漏监听已手动停止"}
+            else:
+                time.sleep(poll_interval + jitter)
 
         return {"success": False, "info": "捡漏监听超时，未能在规定时间内检测到空余名额"}

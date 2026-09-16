@@ -10,7 +10,9 @@ packaging/
 *.spec
 .github/
 test.py
-tests/
+tests/test.py
 request/all post request/
+request/统一身份认证/
+request/统一验证登录扫码 全流程/
 data/
 imgs/

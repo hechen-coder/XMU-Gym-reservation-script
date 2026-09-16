@@ -2,7 +2,7 @@ import os
 import re
 import tempfile
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, Mock
 
 from xdty_booking.auth.cert_generator import CertGenerator
 from xdty_booking.auth.proxy_manager import WindowsProxyManager
@@ -74,11 +74,49 @@ def test_sniffer_proxy_cookie_extraction():
     assert proxy.captured_token == "93dec63b6bea28bfc3f0030543f3a0c9"
     assert proxy.captured_event.is_set()
 
+def test_sniffer_proxy_with_token_validator():
+    """测试带有 token_validator 时的过滤逻辑：未通过时不触发 set，通过时才触发"""
+    validator = Mock(side_effect=[False, True])  # 第1次假Token拒绝，第2次真Token通过
+    proxy = SnifferProxy(host="127.0.0.1", port=18892, token_validator=validator)
+
+    dummy_response = b"HTTP/1.1 200 OK\r\nSet-Cookie: PHPSESSID=dummy_unauth_token; path=/\r\n\r\n"
+    proxy._inspect_and_extract_cookie(dummy_response)
+    assert proxy.captured_token is None
+    assert not proxy.captured_event.is_set()
+
+    valid_response = b"HTTP/1.1 200 OK\r\nSet-Cookie: PHPSESSID=real_auth_token; path=/\r\n\r\n"
+    proxy._inspect_and_extract_cookie(valid_response)
+    assert proxy.captured_token == "real_auth_token"
+    assert proxy.captured_event.is_set()
+
 def test_sniffer_proxy_timeout():
     """测试 SnifferProxy 在超时时间内未收到 Token 的返回"""
     proxy = SnifferProxy(host="127.0.0.1", port=18890)
     token = proxy.wait_for_token(timeout=0.1)
     assert token is None
+
+def test_sniffer_proxy_read_http_message_get_and_chunked():
+    """测试 _read_http_message 正确解析普通 GET 请求与 chunked 响应"""
+    proxy = SnifferProxy(host="127.0.0.1", port=18895)
+    class FakeSocket:
+        def __init__(self, raw: bytes):
+            self.raw = raw
+            self.pos = 0
+        def settimeout(self, t): pass
+        def recv(self, n):
+            c = self.raw[self.pos:self.pos+n]
+            self.pos += len(c)
+            return c
+
+    # 1. 测试 GET 请求（无 Content-Length，无 chunked）
+    get_req = b"GET /view/stadium/home.html HTTP/1.1\r\nHost: xdty.xmu.edu.cn\r\n\r\n"
+    res_get = proxy._read_http_message(FakeSocket(get_req))
+    assert res_get == get_req
+
+    # 2. 测试 Transfer-Encoding: chunked
+    chunked_resp = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n"
+    res_chunked = proxy._read_http_message(FakeSocket(chunked_resp))
+    assert res_chunked == chunked_resp
 
 def test_windows_proxy_manager_context():
     """测试 WindowsProxyManager 上下文管理器的执行与还原"""

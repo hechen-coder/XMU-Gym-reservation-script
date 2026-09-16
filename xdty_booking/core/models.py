@@ -20,7 +20,13 @@ class SlotItem:
         return self.status == "available" and self.selected < self.max_count
 
     @property
+    def is_locked(self) -> bool:
+        return self.status == "locked" or self.select_type == 0 or (self.status != "available" and self.selected == 0)
+
+    @property
     def remaining_capacity(self) -> int:
+        if self.is_locked:
+            return 0
         return max(0, self.max_count - self.selected)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -37,6 +43,7 @@ class SlotItem:
             "is_lock": self.is_lock,
             "lock_reason": self.lock_reason,
             "is_available": self.is_available,
+            "is_locked": self.is_locked,
             "remaining_capacity": self.remaining_capacity
         }
 

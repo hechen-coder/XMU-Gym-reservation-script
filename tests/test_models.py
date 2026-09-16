@@ -31,6 +31,24 @@ def test_slot_item_properties():
     assert full_slot.is_available is False
     assert full_slot.remaining_capacity == 0
 
+    # Locked / course-occupied slot (e.g. 0/95 on Thursday 15:00-16:30)
+    locked_slot = SlotItem(
+        column_id="67",
+        date="2026-09-17",
+        area_name="爱秋体育馆健身房",
+        interval_id="3070",
+        price=0,
+        selected=0,
+        max_count=95,
+        status="locked",
+        select_type=0,
+        is_lock=0,
+        lock_reason=""
+    )
+    assert locked_slot.is_available is False
+    assert locked_slot.is_locked is True
+    assert locked_slot.remaining_capacity == 0
+
 def test_parse_interval_response():
     sample_json = {
         "status": 1,
@@ -112,3 +130,23 @@ def test_parse_interval_response():
     # Non-existent slot
     none_slot = resp.find_slot(date="2026-09-13", time_range="19:30-21:00")
     assert none_slot is None
+
+def test_parse_interval_response_when_data_is_list_or_invalid():
+    # 模拟服务端 Session 失效时返回的典型响应 (data 为 list [])
+    expired_json = {
+        "status": 0,
+        "info": "登录信息失效,请退出重新登录",
+        "data": []
+    }
+    resp = IntervalResponse.from_dict(expired_json)
+    assert resp.status == 0
+    assert resp.info == "登录信息失效,请退出重新登录"
+    assert resp.date_list == []
+    assert resp.time_slot_list == []
+
+    # 模拟 data 为 None 或非字典
+    invalid_json = {"status": -1, "info": "未知错误", "data": None}
+    resp_invalid = IntervalResponse.from_dict(invalid_json)
+    assert resp_invalid.status == -1
+    assert resp_invalid.date_list == []
+    assert resp_invalid.time_slot_list == []

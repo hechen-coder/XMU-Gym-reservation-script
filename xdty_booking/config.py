@@ -195,3 +195,36 @@ def save_auth_params(config_path: str, params: Dict[str, Any]) -> bool:
         f.write(new_content)
     return True
 
+def save_target_and_scheduler_config(
+    config_path: str,
+    target_updates: Optional[Dict[str, Any]] = None,
+    scheduler_updates: Optional[Dict[str, Any]] = None
+) -> bool:
+    """
+    持久化回写用户选择的目标场馆地点、预约时段以及早 7 点抢票定时配置至配置文件
+    """
+    if not os.path.exists(config_path):
+        return False
+
+    with open(config_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    data = yaml.safe_load(content) or {}
+    if not isinstance(data, dict):
+        data = {}
+
+    if target_updates:
+        if "target" not in data or not isinstance(data["target"], dict):
+            data["target"] = {}
+        data["target"].update(target_updates)
+
+    if scheduler_updates:
+        if "scheduler" not in data or not isinstance(data["scheduler"], dict):
+            data["scheduler"] = {}
+        data["scheduler"].update(scheduler_updates)
+
+    new_content = yaml.dump(data, allow_unicode=True, sort_keys=False)
+    with open(config_path, "w", encoding="utf-8") as f:
+        f.write(new_content)
+    return True
+

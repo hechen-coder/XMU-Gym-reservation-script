@@ -80,6 +80,40 @@ def test_get_intervals(mock_client):
         assert slot is not None
         assert slot.interval_id == "3080"
 
+def test_get_stadium_details(mock_client):
+    api = XdtyApi(mock_client)
+    with patch.object(mock_client.session, 'post') as mock_post:
+        mock_resp = Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"status": 1, "info": "查询成功", "data": {"name": "翔安校区健身房", "user_range": "[67]"}}
+        mock_post.return_value = mock_resp
+
+        res = api.get_stadium_details(stadium_id=16)
+        assert res["status"] == 1
+        assert res["data"]["name"] == "翔安校区健身房"
+
+def test_get_intervals_auto_retry_on_param_error(mock_client):
+    api = XdtyApi(mock_client)
+    with patch.object(mock_client.session, 'post') as mock_post:
+        resp_err = Mock()
+        resp_err.status_code = 200
+        resp_err.json.return_value = {"status": 0, "info": "参数错误", "data": []}
+
+        resp_det = Mock()
+        resp_det.status_code = 200
+        resp_det.json.return_value = {"status": 1, "data": {"user_range": "[67]"}}
+
+        resp_ok = Mock()
+        resp_ok.status_code = 200
+        resp_ok.json.return_value = {"status": 1, "info": "查询成功", "data": {"date_list": [], "time_slot_list": []}}
+
+        mock_post.side_effect = [resp_err, resp_det, resp_ok]
+
+        res = api.get_intervals(venue_id=14, stadium_id=16, category_id=8)
+        assert res.status == 1
+        assert res.info == "查询成功"
+        assert mock_post.call_count == 3
+
 def test_choose_verify(mock_client):
     api = XdtyApi(mock_client)
     with patch.object(mock_client.session, 'post') as mock_post:

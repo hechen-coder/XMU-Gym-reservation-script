@@ -59,13 +59,18 @@ def print_gym_status(data):
             print("-" * 76)
 
         for s in g.get("slots", []):
-            if s["is_available"]:
-                badge = "[空闲充足]" if s["remaining"] > 10 else "[剩余紧张]"
+            if s.get("is_available"):
+                badge = "[空闲充足]" if s.get("remaining", 0) > 10 else "[剩余紧张]"
+                rem_text = f"剩余: {s.get('remaining', 0):>2}人 (已约 {s.get('selected', 0):>2}/{s.get('max_count', 0):<2})"
+            elif s.get("is_locked") or s.get("status") == "locked" or (s.get("selected", 0) == 0 and not s.get("is_available")):
+                badge = "[课程占用]"
+                rem_text = f"教学课程占用 · 暂不开放个人预约 (0/{s.get('max_count', 0):<2})"
             else:
                 badge = "[已经约满]"
+                rem_text = f"名额已约满 (已约 {s.get('selected', 0):>2}/{s.get('max_count', 0):<2})"
 
             pref = " *【目标时段】" if g.get("is_preferred") else ""
-            status_text = f"时段: {g['time_range']:<13} | {badge} | 剩余: {s['remaining']:>2}人 (已约 {s['selected']:>2}/{s['max_count']:<2}){pref}"
+            status_text = f"时段: {g['time_range']:<13} | {badge} | {rem_text}{pref}"
             print(f"  {status_text}")
 
     print("\n" + "=" * 76 + "\n")

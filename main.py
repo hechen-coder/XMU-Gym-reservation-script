@@ -34,7 +34,7 @@ def build_cli_parser():
         epilog="""
 使用示例:
   python main.py schedule                  # 早上 07:00 准点抢次日名额 (提前自检自愈+就近时段降级+通知)
-  python main.py web [--port 8080]         # 启动 8080 端口 Web 监控与一键预约平台 (带 Session 自愈)
+  python main.py web [--port 8080]         # 启动 Web 平台 (企业微信扫码登录+实时查询+一键预约抢票)
   python main.py book                      # 立即执行一次预约抢票 (首选满则自动就近降级)
   python main.py book --watch              # 开启捡漏监听秒杀 (断线/过期自动自愈，出票立马秒杀)
   python main.py snipe                     # 捡漏秒杀快捷指令
@@ -309,12 +309,17 @@ def main():
                 for s in g.slots:
                     if s.is_available:
                         badge = "[空闲充足]" if s.remaining_capacity > 10 else "[剩余紧张]"
+                        rem_text = f"剩余: {s.remaining_capacity:>2}人 (已约 {s.selected:>2}/{s.max_count:<2})"
+                    elif getattr(s, "is_locked", False) or s.status == "locked" or (s.selected == 0 and not s.is_available):
+                        badge = "[课程占用]"
+                        rem_text = f"教学课程占用 · 暂不开放个人预约 (0/{s.max_count:<2})"
                     else:
                         badge = "[已经约满]"
+                        rem_text = f"名额已约满 (已约 {s.selected:>2}/{s.max_count:<2})"
 
                     is_pref = (g.time_range == cfg.target.preferred_time)
                     pref_mark = " *【目标时段】" if is_pref else ""
-                    print(f"  时段: {g.time_range:<13} | {badge} | 剩余: {s.remaining_capacity:>2}人 (已约 {s.selected:>2}/{s.max_count:<2}){pref_mark}")
+                    print(f"  时段: {g.time_range:<13} | {badge} | {rem_text}{pref_mark}")
             print("\n" + "=" * 76 + "\n")
         except Exception as e:
             logger.error(f"查询场馆空闲状态失败: {e}")
