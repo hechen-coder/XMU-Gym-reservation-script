@@ -45,6 +45,10 @@ def render_dashboard(data: dict) -> str:
     snipe_status = data.get("snipe_status", {})
     is_snipe_running = snipe_status.get("running", False)
 
+    notify_config = data.get("notify_config", {})
+    is_notify_enabled = bool(notify_config.get("enabled", False))
+    notify_email = str(notify_config.get("email", "") or "")
+
     now = datetime.now()
     today_str = now.strftime("%Y-%m-%d")
     tomorrow_str = (now + timedelta(days=1)).strftime("%Y-%m-%d")
@@ -78,7 +82,7 @@ def render_dashboard(data: dict) -> str:
 
     if is_session_valid:
         session_badge = '<span class="status-pill ok">● 登录有效</span>'
-        top_bar_actions = """
+        top_bar_actions = f"""
             <div class="actions-group">
                 <button type="button" class="btn-action" onclick="location.reload()" title="刷新当前场地余量">
                     🔄 刷新
@@ -94,7 +98,7 @@ def render_dashboard(data: dict) -> str:
         """
     else:
         session_badge = '<span class="status-pill warn">⚠️ 未登录</span>'
-        top_bar_actions = """
+        top_bar_actions = f"""
             <div class="actions-group">
                 <a href="/login" class="btn-action btn-primary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 4px; font-weight: 600;" title="使用手机企业微信扫码登录">
                     📱 扫码登录
@@ -668,6 +672,48 @@ def render_dashboard(data: dict) -> str:
             flex-wrap: wrap;
             gap: 10px;
         }}
+        /* iOS 风格滑动开关 */
+        .switch-toggle {{
+            position: relative;
+            display: inline-block;
+            width: 46px;
+            height: 25px;
+            vertical-align: middle;
+        }}
+        .switch-toggle input {{
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }}
+        .switch-slider {{
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #cbd5e1;
+            transition: .25s ease;
+            border-radius: 25px;
+        }}
+        .switch-slider:before {{
+            position: absolute;
+            content: "";
+            height: 19px;
+            width: 19px;
+            left: 3px;
+            bottom: 3px;
+            background-color: #ffffff;
+            transition: .25s ease;
+            border-radius: 50%;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.18);
+        }}
+        .switch-toggle input:checked + .switch-slider {{
+            background-color: #10b981;
+        }}
+        .switch-toggle input:checked + .switch-slider:before {{
+            transform: translateX(21px);
+        }}
         .rule-banner {{
             background: #eff6ff;
             border: 1px solid #bfdbfe;
@@ -934,9 +980,44 @@ def render_dashboard(data: dict) -> str:
             border-radius: 6px;
             transition: all 0.15s ease;
         }}
-        .dialog-close-btn:hover {{
-            color: #1e293b;
+        /* 我的预约弹窗与列表样式 */
+        .order-tab-btn {{
+            padding: 6px 14px;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+            background: #f8fafc;
+            color: #475569;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all .2s;
+        }}
+        .order-tab-btn:hover {{
             background: #f1f5f9;
+            border-color: #cbd5e1;
+        }}
+        .order-tab-btn.active {{
+            background: #2563eb;
+            color: #ffffff;
+            border-color: #2563eb;
+            box-shadow: 0 1px 3px rgba(37,99,235,0.25);
+        }}
+        .order-card {{
+            background: #ffffff;
+            border: 1.5px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 14px 16px;
+            transition: all .2s;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+            text-align: left;
+        }}
+        .order-card:hover {{
+            border-color: #93c5fd;
+            box-shadow: 0 4px 12px rgba(37,99,235,0.06);
+        }}
+        .order-card.active-order {{
+            border-color: #86efac;
+            background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 60%);
         }}
     </style>
 </head>
@@ -987,9 +1068,21 @@ def render_dashboard(data: dict) -> str:
                     <span class="pulse-dot" style="background: #2563eb;"></span>
                     <span>🟢 正在捡漏中 (点击查看)</span>
                 </button>
+
+                <!-- 抢票结果通知设置按钮 -->
+                <button type="button" class="btn-feature" id="featureNotifyBtn" onclick="openNotifyModal()" title="设置抢票成功微信/QQ邮箱即时通知" style="display: inline-flex; align-items: center; gap: 6px;">
+                    <span>🔔 通知提醒</span>
+                    <span id="featureNotifyStatusBadge" style="font-size: 11px; padding: 1px 6px; border-radius: 8px; font-weight: 600; {'background: #dcfce7; color: #15803d;' if is_notify_enabled else 'background: #f1f5f9; color: #64748b;'}">{'🟢 已开启' if is_notify_enabled else '⚪ 未开启'}</span>
+                </button>
+
+                <!-- 查看我的预约快捷入口 -->
+                <button type="button" class="btn-feature" id="featureMyOrdersBtn" onclick="openMyOrdersModal()" title="查看我的预约记录与有效场次" style="display: inline-flex; align-items: center; gap: 6px;">
+                    <span>📋 我的预约</span>
+                    <span id="featureMyOrdersBadge" style="font-size: 11px; padding: 1px 6px; border-radius: 8px; font-weight: 600; background: #eff6ff; color: #2563eb;">查询</span>
+                </button>
             </div>
             <div class="feature-tip">
-                <span>💡 <strong>定时预约</strong>：次日早 07:00 准点秒抢 ｜ <strong>捡漏监听</strong>：高频监测退票名额毫秒捡漏</span>
+                <span>💡 <strong>定时预约</strong>：早 07:00 秒抢 ｜ <strong>捡漏监听</strong>：高频监测退票 ｜ <strong>通知设置</strong>：微信秒弹 ｜ <strong>我的预约</strong>：查看有效场次</span>
             </div>
         </div>
 
@@ -1035,6 +1128,117 @@ def render_dashboard(data: dict) -> str:
             <div class="custom-dialog-footer" id="customDialogButtons">
                 <button type="button" class="dialog-btn dialog-btn-cancel" id="customDialogCancelBtn">取消</button>
                 <button type="button" class="dialog-btn dialog-btn-confirm" id="customDialogConfirmBtn">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 抢票结果通知设置模态框 (QQ邮箱/微信联动即时通知) -->
+    <div id="notifyModal" class="modal-overlay" style="display: none;">
+        <div class="modal-card" style="max-width: 520px;">
+            <div class="modal-header">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 24px;">🔔</span>
+                    <div>
+                        <h2 style="font-size: 17px; font-weight: 700; color: #0f172a; margin: 0;">抢票通知设置</h2>
+                    </div>
+                </div>
+                <button type="button" class="modal-close-btn" onclick="closeNotifyModal()" title="关闭">✕</button>
+            </div>
+
+            <div class="modal-body">
+                <!-- 通知说明横幅 -->
+                <div class="rule-banner" style="background: #f0fdf4; border: 1.5px solid #bbf7d0; padding: 10px 14px;">
+                    <div style="color: #15803d; font-size: 13px; display: flex; align-items: center; gap: 6px;">
+                        <span>✨</span>
+                        <span>填写您的 <strong>邮箱</strong> 后，系统将自动投递邮件通知。</span>
+                    </div>
+                </div>
+
+                <!-- 通知总开关 -->
+                <div style="margin: 16px 0; padding: 14px 16px; background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div style="font-weight: 700; font-size: 14px; color: #1e293b;">通知提醒总开关</div>
+                        <div style="font-size: 12px; color: #64748b; margin-top: 2px;">抢票成功后自动向下方邮箱投递场地详情卡片</div>
+                    </div>
+                    <label class="switch-toggle" title="切换通知开关">
+                        <input type="checkbox" id="notifySwitch" {'checked' if is_notify_enabled else ''}>
+                        <span class="switch-slider"></span>
+                    </label>
+                </div>
+
+                <!-- 邮箱地址输入 -->
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label class="form-label" for="notifyEmailInput">
+                        <span>接收通知的 QQ 邮箱:</span>
+                        <span style="font-size: 11px; color: #2563eb; font-weight: normal;">支持 QQ / 163 / 厦大校园邮箱</span>
+                    </label>
+                    <input type="email" id="notifyEmailInput" value="{notify_email}" placeholder="例如: 123456789@qq.com" style="width: 100%; box-sizing: border-box; padding: 10px 14px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 14px; outline: none; transition: border-color .2s;" onfocus="this.style.borderColor='#2563eb'" onblur="this.style.borderColor='#cbd5e1'">
+                    <p style="font-size: 12px; color: #64748b; margin: 6px 0 0 0;">
+                        💡 提示：强烈推荐填常用 QQ 邮箱。投递成功后手机微信会自动收到卡片通知。
+                    </p>
+                </div>
+
+                <!-- 微信设置排查折叠指引 -->
+                <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 12px; font-size: 12px; color: #1e40af; line-height: 1.6;">
+                    <div style="font-weight: 700; margin-bottom: 3px;">📱 如何确保手机微信弹出卡片提醒？</div>
+                    打开手机微信 ➔【我】➔【设置】➔【通用】➔【辅助功能】➔ 确保【QQ邮箱提醒】为<strong>“已启用”</strong>状态即可！
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="btn-action" id="btnTestNotify" onclick="sendTestNotification()" style="font-size: 13px; padding: 8px 14px; display: inline-flex; align-items: center; gap: 6px;" title="向指定邮箱发送测试邮件验证通道">
+                    <span>🧪 发送测试通知</span>
+                </button>
+                <div style="display: flex; gap: 10px;">
+                    <button type="button" class="dialog-btn dialog-btn-cancel" onclick="closeNotifyModal()">取消</button>
+                    <button type="button" class="dialog-btn dialog-btn-confirm" id="btnSaveNotify" onclick="saveNotificationSettings()">保存设置</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 查看我的预约模态框 -->
+    <div id="myOrdersModal" class="modal-overlay" style="display: none;">
+        <div class="modal-card" style="max-width: 640px; max-height: 85vh; display: flex; flex-direction: column;">
+            <div class="modal-header" style="flex-shrink: 0;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 24px;">📋</span>
+                    <div>
+                        <h2 style="font-size: 17px; font-weight: 700; color: #0f172a; margin: 0;">我的预约记录</h2>
+                        <p style="font-size: 12px; color: #64748b; margin: 3px 0 0 0;">查看预约成功的有效场次及历史记录</p>
+                    </div>
+                </div>
+                <button type="button" class="modal-close-btn" onclick="closeMyOrdersModal()" title="关闭">✕</button>
+            </div>
+
+            <div style="padding: 12px 20px; background: #ffffff; border-bottom: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;">
+                <div style="display: flex; gap: 8px;">
+                    <button type="button" class="order-tab-btn active" id="tabOrderActive" onclick="filterMyOrders('active')">🟢 预约有效 (<span id="countOrderActive">0</span>)</button>
+                    <button type="button" class="order-tab-btn" id="tabOrderAll" onclick="filterMyOrders('all')">全部记录 (<span id="countOrderAll">0</span>)</button>
+                </div>
+                <button type="button" class="btn-action" onclick="fetchMyOrders(true)" id="btnRefreshOrders" style="font-size: 12px; padding: 4px 12px; display: inline-flex; align-items: center; gap: 4px;" title="拉取最新预约状态">
+                    <span>🔄 刷新列表</span>
+                </button>
+            </div>
+
+            <div class="modal-body" id="myOrdersBody" style="overflow-y: auto; flex: 1; padding: 16px 20px; min-height: 200px;">
+                <div id="myOrdersLoading" style="text-align: center; padding: 40px 0; color: #64748b; font-size: 13px;">
+                    <div style="font-size: 24px; margin-bottom: 8px;">⏳</div>
+                    <div>正在获取预约记录，请稍候...</div>
+                </div>
+                <div id="myOrdersList" style="display: none; display: flex; flex-direction: column; gap: 12px;"></div>
+                <div id="myOrdersEmpty" style="display: none; text-align: center; padding: 45px 0; color: #94a3b8;">
+                    <div style="font-size: 36px; margin-bottom: 8px;">📭</div>
+                    <div style="font-size: 14px; font-weight: 600; color: #64748b;">暂无相关预约记录</div>
+                    <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">快去预约场地或开启定时抢票吧！</div>
+                </div>
+            </div>
+
+            <div class="modal-footer" style="flex-shrink: 0; justify-content: space-between;">
+                <div style="font-size: 12px; color: #64748b;" id="myOrdersSummaryText">
+                    共获取到 0 场记录
+                </div>
+                <button type="button" class="btn-action" onclick="closeMyOrdersModal()">关闭</button>
             </div>
         </div>
     </div>
@@ -1603,7 +1807,346 @@ def render_dashboard(data: dict) -> str:
 
             fetchSchedulerStatus();
             fetchSnipeStatus();
+            fetchNotifyConfig();
+            fetchMyOrders();
         }});
+
+        function openNotifyModal() {{
+            const modal = document.getElementById("notifyModal");
+            if (modal) modal.style.display = "flex";
+            fetchNotifyConfig();
+        }}
+
+        function closeNotifyModal() {{
+            const modal = document.getElementById("notifyModal");
+            if (modal) modal.style.display = "none";
+        }}
+
+        async function fetchNotifyConfig() {{
+            try {{
+                const res = await fetch("/api/notify/config");
+                const data = await res.json();
+                if (data.status === "ok") {{
+                    updateNotifyUIState(!!data.enabled, data.email || "");
+                }}
+            }} catch (err) {{
+                console.error("获取通知配置异常:", err);
+            }}
+        }}
+
+        function updateNotifyUIState(enabled, email = null) {{
+            const sw = document.getElementById("notifySwitch");
+            if (sw) sw.checked = enabled;
+
+            if (email !== null) {{
+                const inp = document.getElementById("notifyEmailInput");
+                if (inp && !inp.matches(':focus')) {{
+                    inp.value = email;
+                }}
+            }}
+
+            const topDot = document.getElementById("topNotifyDot");
+            if (topDot) {{
+                topDot.style.background = enabled ? "#10b981" : "#94a3b8";
+            }}
+
+            const featBadge = document.getElementById("featureNotifyStatusBadge");
+            if (featBadge) {{
+                if (enabled) {{
+                    featBadge.style.background = "#dcfce7";
+                    featBadge.style.color = "#15803d";
+                    featBadge.innerText = "🟢 已开启";
+                }} else {{
+                    featBadge.style.background = "#f1f5f9";
+                    featBadge.style.color = "#64748b";
+                    featBadge.innerText = "⚪ 未开启";
+                }}
+            }}
+        }}
+
+        async function sendTestNotification() {{
+            const emailInp = document.getElementById("notifyEmailInput");
+            const email = emailInp ? emailInp.value.trim() : "";
+            if (!email) {{
+                await customAlert("请先填写接收通知的邮箱地址后再测试！", "warning");
+                if (emailInp) emailInp.focus();
+                return;
+            }}
+
+            if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {{
+                await customAlert("邮箱格式不正确，请填写标准邮箱（例如: 123456@qq.com）！", "warning");
+                if (emailInp) emailInp.focus();
+                return;
+            }}
+
+            const btn = document.getElementById("btnTestNotify");
+            const originalText = btn ? btn.innerHTML : "🧪 发送测试通知";
+            if (btn) {{
+                btn.disabled = true;
+                btn.innerHTML = "⏳ 正在发送中...";
+            }}
+
+            try {{
+                const res = await fetch("/api/notify/test", {{
+                    method: "POST",
+                    headers: {{ "Content-Type": "application/json" }},
+                    body: JSON.stringify({{ email: email }})
+                }});
+                const data = await res.json();
+                if (data.status === "ok") {{
+                    await customAlert(`测试邮件已成功投递至：${{email}}\\n\\n如果您的微信绑定了该 QQ 邮箱并开启了【QQ邮箱提醒】，稍候几秒手机微信即可弹出测试卡片！`, "success", "测试通知发送成功");
+                }} else {{
+                    await customAlert(`测试通知发送失败：\\n${{data.message || '未知错误'}}`, "error", "发送测试失败");
+                }}
+            }} catch (err) {{
+                await customAlert(`网络请求异常：${{err.message}}`, "error");
+            }} finally {{
+                if (btn) {{
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                }}
+            }}
+        }}
+
+        async function saveNotificationSettings() {{
+            const sw = document.getElementById("notifySwitch");
+            const emailInp = document.getElementById("notifyEmailInput");
+            const enabled = sw ? sw.checked : false;
+            const email = emailInp ? emailInp.value.trim() : "";
+
+            if (enabled && !email) {{
+                await customAlert("开启通知后必须填写接收邮箱地址！", "warning");
+                if (emailInp) emailInp.focus();
+                return;
+            }}
+
+            if (email && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {{
+                await customAlert("邮箱格式不正确，请填写标准邮箱（例如: 123456@qq.com）！", "warning");
+                if (emailInp) emailInp.focus();
+                return;
+            }}
+
+            const btn = document.getElementById("btnSaveNotify");
+            if (btn) {{
+                btn.disabled = true;
+                btn.innerText = "正在保存...";
+            }}
+
+            try {{
+                const res = await fetch("/api/notify/config", {{
+                    method: "POST",
+                    headers: {{ "Content-Type": "application/json" }},
+                    body: JSON.stringify({{ enabled: enabled, email: email }})
+                }});
+                const data = await res.json();
+                if (data.status === "ok") {{
+                    updateNotifyUIState(enabled, email);
+                    showToast("✅ 通知配置已成功保存！");
+                    closeNotifyModal();
+                }} else {{
+                    await customAlert(`保存通知配置失败：${{data.message || '未知错误'}}`, "error");
+                }}
+            }} catch (err) {{
+                await customAlert(`网络请求异常：${{err.message}}`, "error");
+            }} finally {{
+                if (btn) {{
+                    btn.disabled = false;
+                    btn.innerText = "保存设置";
+                }}
+            }}
+        }}
+
+        let _allMyOrders = [];
+        let _currentOrderFilter = 'active';
+
+        function openMyOrdersModal() {{
+            const modal = document.getElementById("myOrdersModal");
+            if (modal) modal.style.display = "flex";
+            fetchMyOrders();
+        }}
+
+        function closeMyOrdersModal() {{
+            const modal = document.getElementById("myOrdersModal");
+            if (modal) modal.style.display = "none";
+        }}
+
+        function filterMyOrders(filterType) {{
+            _currentOrderFilter = filterType;
+            const tabActive = document.getElementById("tabOrderActive");
+            const tabAll = document.getElementById("tabOrderAll");
+            if (tabActive) {{
+                if (filterType === 'active') tabActive.classList.add("active");
+                else tabActive.classList.remove("active");
+            }}
+            if (tabAll) {{
+                if (filterType === 'all') tabAll.classList.add("active");
+                else tabAll.classList.remove("active");
+            }}
+            renderOrdersList();
+        }}
+
+        async function fetchMyOrders(isManualRefresh = false) {{
+            const loadingEl = document.getElementById("myOrdersLoading");
+            const listEl = document.getElementById("myOrdersList");
+            const emptyEl = document.getElementById("myOrdersEmpty");
+            const refreshBtn = document.getElementById("btnRefreshOrders");
+
+            if (refreshBtn) {{
+                refreshBtn.disabled = true;
+                refreshBtn.innerHTML = "<span>⏳ 刷新中...</span>";
+            }}
+
+            if (loadingEl) loadingEl.style.display = "block";
+            if (listEl) listEl.style.display = "none";
+            if (emptyEl) emptyEl.style.display = "none";
+
+            try {{
+                const res = await fetch("/api/orders/my");
+                const data = await res.json();
+                if (loadingEl) loadingEl.style.display = "none";
+
+                if (data.success) {{
+                    _allMyOrders = Array.isArray(data.orders) ? data.orders : [];
+                    const activeOrders = _allMyOrders.filter(o => o.audit_status === 1);
+                    const activeCount = activeOrders.length;
+
+                    const badge = document.getElementById("featureMyOrdersBadge");
+                    if (badge) {{
+                        if (activeCount > 0) {{
+                            badge.style.background = "#dcfce7";
+                            badge.style.color = "#15803d";
+                            badge.innerText = `${{activeCount}} 场有效`;
+                        }} else {{
+                            badge.style.background = "#eff6ff";
+                            badge.style.color = "#2563eb";
+                            badge.innerText = "0 场有效";
+                        }}
+                    }}
+
+                    const countActive = document.getElementById("countOrderActive");
+                    const countAll = document.getElementById("countOrderAll");
+                    if (countActive) countActive.innerText = activeCount;
+                    if (countAll) countAll.innerText = _allMyOrders.length;
+
+                    if (activeCount === 0 && _allMyOrders.length > 0 && _currentOrderFilter === 'active' && !isManualRefresh) {{
+                        filterMyOrders('all');
+                        return;
+                    }}
+
+                    renderOrdersList();
+                    if (isManualRefresh) {{
+                        showToast("✅ 我的预约记录已刷新！");
+                    }}
+                }} else {{
+                    if (emptyEl) {{
+                        emptyEl.style.display = "block";
+                        emptyEl.innerHTML = `<div style="font-size: 32px; margin-bottom: 8px;">⚠️</div><div style="font-weight: 600; color: #b91c1c;">${{data.info || '获取预约记录失败'}}</div>`;
+                    }}
+                }}
+            }} catch (err) {{
+                if (loadingEl) loadingEl.style.display = "none";
+                if (emptyEl) {{
+                    emptyEl.style.display = "block";
+                    emptyEl.innerHTML = `<div style="font-size: 32px; margin-bottom: 8px;">❌</div><div style="font-weight: 600; color: #b91c1c;">网络请求失败: ${{err.message}}</div>`;
+                }}
+            }} finally {{
+                if (refreshBtn) {{
+                    refreshBtn.disabled = false;
+                    refreshBtn.innerHTML = "<span>🔄 刷新列表</span>";
+                }}
+            }}
+        }}
+
+        function renderOrdersList() {{
+            const listEl = document.getElementById("myOrdersList");
+            const emptyEl = document.getElementById("myOrdersEmpty");
+            const summaryEl = document.getElementById("myOrdersSummaryText");
+            if (!listEl) return;
+
+            let filtered = [];
+            if (_currentOrderFilter === 'active') {{
+                filtered = _allMyOrders.filter(o => o.audit_status === 1);
+            }} else {{
+                filtered = _allMyOrders;
+            }}
+
+            if (summaryEl) {{
+                summaryEl.innerText = `共显示 ${{filtered.length}} 条记录 (总计 ${{_allMyOrders.length}} 条)`;
+            }}
+
+            if (filtered.length === 0) {{
+                listEl.style.display = "none";
+                if (emptyEl) {{
+                    emptyEl.style.display = "block";
+                    if (_currentOrderFilter === 'active') {{
+                        emptyEl.innerHTML = `
+                            <div style="font-size: 36px; margin-bottom: 8px;">📭</div>
+                            <div style="font-size: 14px; font-weight: 600; color: #64748b;">当前暂无预约有效的场次</div>
+                            <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">可在主界面挑选心仪场地立刻预约或开启定时秒抢！</div>
+                        `;
+                    }} else {{
+                        emptyEl.innerHTML = `
+                            <div style="font-size: 36px; margin-bottom: 8px;">📭</div>
+                            <div style="font-size: 14px; font-weight: 600; color: #64748b;">暂无任何预约记录</div>
+                        `;
+                    }}
+                }}
+                return;
+            }}
+
+            if (emptyEl) emptyEl.style.display = "none";
+            listEl.style.display = "flex";
+
+            listEl.innerHTML = filtered.map(order => {{
+                const isActive = (order.audit_status === 1);
+                let statusBadge = "";
+                if (order.audit_status === 1) {{
+                    statusBadge = `<span style="background: #dcfce7; color: #15803d; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 8px; display: inline-flex; align-items: center; gap: 4px;">🟢 预约成功 (有效)</span>`;
+                }} else if (order.audit_status === 2) {{
+                    statusBadge = `<span style="background: #f1f5f9; color: #475569; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 8px;">⚪ 已核销</span>`;
+                }} else if (order.audit_status === 3) {{
+                    statusBadge = `<span style="background: #fee2e2; color: #b91c1c; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 8px;">✕ 已取消</span>`;
+                }} else if (order.audit_status === 6) {{
+                    statusBadge = `<span style="background: #fef3c7; color: #b45309; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 8px;">⏳ 待支付</span>`;
+                }} else {{
+                    statusBadge = `<span style="background: #f1f5f9; color: #475569; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 8px;">${{order.audit_status_text || '已完成'}}</span>`;
+                }}
+
+                const timeSlotHtml = (order.date && order.interval_time)
+                    ? `<div style="background: ${{isActive ? '#f0fdf4' : '#f8fafc'}}; border: 1px solid ${{isActive ? '#bbf7d0' : '#e2e8f0'}}; border-radius: 8px; padding: 10px 12px; margin: 10px 0; display: flex; align-items: center; gap: 8px;">
+                           <span style="font-size: 18px;">🕒</span>
+                           <div>
+                               <div style="font-size: 14px; font-weight: 700; color: ${{isActive ? '#15803d' : '#1e293b'}};">${{order.date}} ${{order.week || ''}} ${{order.interval_time}}</div>
+                               <div style="font-size: 12px; color: #64748b; margin-top: 2px;">📍 场地: ${{order.area_name || order.venue_name || order.stadium_name || '主场馆'}}</div>
+                           </div>
+                       </div>`
+                    : `<div style="margin: 8px 0; font-size: 13px; color: #64748b;">
+                           <span>📍 校区场地: ${{order.location || ''}} · ${{order.stadium_name || '健身房'}}</span>
+                       </div>`;
+
+                const stadiumDisplay = order.stadium_name || '厦大健身房';
+                const orderNum = order.order_num || ('ID: ' + order.order_id);
+
+                return `
+                    <div class="order-card ${{isActive ? 'active-order' : ''}}">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div style="font-weight: 700; font-size: 15px; color: #0f172a; display: flex; align-items: center; gap: 6px;">
+                                <span>🏋️</span>
+                                <span>${{stadiumDisplay}}</span>
+                            </div>
+                            <div>${{statusBadge}}</div>
+                        </div>
+
+                        ${{timeSlotHtml}}
+
+                        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: #94a3b8; border-top: 1px dashed #f1f5f9; padding-top: 8px; margin-top: 6px;">
+                            <div>订单号: <span style="font-family: monospace; color: #64748b;">${{orderNum}}</span></div>
+                            <div>项目: ${{order.project_name || '健身房'}}</div>
+                        </div>
+                    </div>
+                `;
+            }}).join("");
+        }}
 
         let currentSchedulerRunning = false;
 
@@ -2307,6 +2850,14 @@ def render_dashboard(data: dict) -> str:
             if (customModal && e.target === customModal) {{
                 _closeCustomDialog(false);
             }}
+            const notifModal = document.getElementById("notifyModal");
+            if (notifModal && e.target === notifModal) {{
+                closeNotifyModal();
+            }}
+            const ordersModal = document.getElementById("myOrdersModal");
+            if (ordersModal && e.target === ordersModal) {{
+                closeMyOrdersModal();
+            }}
             const licModal = document.getElementById("licenseModalOverlay");
             if (licModal && e.target === licModal) {{
                 closeLicenseModal();
@@ -2327,6 +2878,16 @@ def render_dashboard(data: dict) -> str:
                 const customModal = document.getElementById("customDialogModal");
                 if (customModal && customModal.style.display === "flex") {{
                     _closeCustomDialog(false);
+                    return;
+                }}
+                const notifModal = document.getElementById("notifyModal");
+                if (notifModal && notifModal.style.display === "flex") {{
+                    closeNotifyModal();
+                    return;
+                }}
+                const ordersModal = document.getElementById("myOrdersModal");
+                if (ordersModal && ordersModal.style.display === "flex") {{
+                    closeMyOrdersModal();
                     return;
                 }}
                 const licModal = document.getElementById("licenseModalOverlay");

@@ -169,3 +169,179 @@ class TestWebServer(unittest.TestCase):
         self.assertIn('e.key === "Escape"', html)
         self.assertIn('e.key === "Enter"', html)
 
+    def test_render_dashboard_notification_ui(self):
+        data = {
+            "stadium_name": "测试健身房",
+            "area_name": "二楼力量区",
+            "query_time": "2026-09-12 10:00:00",
+            "session_valid": True,
+            "info": "正常",
+            "groups": [],
+            "notify_config": {
+                "enabled": True,
+                "email": "user@qq.com",
+                "channel": "email"
+            }
+        }
+        html = render_dashboard(data)
+        self.assertIn('id="featureNotifyBtn"', html)
+        self.assertIn('id="notifyModal"', html)
+        self.assertIn('id="notifySwitch"', html)
+        self.assertIn('id="notifyEmailInput"', html)
+        self.assertIn('sendTestNotification()', html)
+        self.assertIn('saveNotificationSettings()', html)
+        self.assertIn('openNotifyModal()', html)
+        self.assertIn('user@qq.com', html)
+
+    @patch("xdty_booking.web.server.load_config")
+    def test_handle_notify_config_get(self, mock_load):
+        cfg = MagicMock()
+        cfg.notify.enabled = True
+        cfg.notify.email.to_addrs = ["user123@qq.com"]
+        cfg.notify.channel = "email"
+        mock_load.return_value = cfg
+
+        handler = GymStatusHandler.__new__(GymStatusHandler)
+        handler._send_json = MagicMock()
+
+        handler._handle_notify_config_get()
+        handler._send_json.assert_called_once()
+        code, body = handler._send_json.call_args[0]
+        self.assertEqual(code, 200)
+        self.assertEqual(body["status"], "ok")
+        self.assertTrue(body["enabled"])
+        self.assertEqual(body["email"], "user123@qq.com")
+
+    @patch("xdty_booking.web.server.save_notify_config")
+    def test_handle_notify_config_post(self, mock_save):
+        handler = GymStatusHandler.__new__(GymStatusHandler)
+        handler._send_json = MagicMock()
+
+        payload = {"enabled": True, "email": "test@qq.com"}
+        handler._handle_notify_config_post(payload)
+
+        mock_save.assert_called_once_with(unittest.mock.ANY, enabled=True, email="test@qq.com", channel="email")
+        handler._send_json.assert_called_once()
+        code, body = handler._send_json.call_args[0]
+        self.assertEqual(code, 200)
+        self.assertEqual(body["status"], "ok")
+
+    @patch("xdty_booking.web.server.load_config")
+    @patch("xdty_booking.web.server.Notifier")
+    def test_handle_notify_test(self, mock_notifier_cls, mock_load):
+        cfg = MagicMock()
+        mock_load.return_value = cfg
+        mock_notifier = MagicMock()
+        mock_notifier.send_test.return_value = {"email": True}
+        mock_notifier_cls.return_value = mock_notifier
+
+        handler = GymStatusHandler.__new__(GymStatusHandler)
+        handler._send_json = MagicMock()
+
+        payload = {"email": "tester@qq.com"}
+        handler._handle_notify_test(payload)
+
+        self.assertEqual(cfg.notify.email.to_addrs, ["tester@qq.com"])
+        mock_notifier.send_test.assert_called_once()
+        handler._send_json.assert_called_once()
+        code, body = handler._send_json.call_args[0]
+        self.assertEqual(code, 200)
+        self.assertEqual(body["status"], "ok")
+
+    def test_render_dashboard_my_orders_ui(self):
+        data = {
+            "stadium_name": "测试健身房",
+            "area_name": "二楼力量区",
+            "query_time": "2026-09-12 10:00:00",
+            "session_valid": True,
+            "info": "正常",
+            "groups": []
+        }
+        html = render_dashboard(data)
+        self.assertIn('id="featureMyOrdersBtn"', html)
+        self.assertIn('id="myOrdersModal"', html)
+        self.assertIn('openMyOrdersModal()', html)
+        self.assertIn('fetchMyOrders()', html)
+        self.assertIn('filterMyOrders(', html)
+
+    @patch("xdty_booking.web.server.load_config")
+    @patch("xdty_booking.web.server.ensure_session")
+    @patch("xdty_booking.web.server.XdtyApi")
+    def test_handle_my_orders_success(self, mock_api_cls, mock_ensure, mock_load):
+        mock_ensure.return_value = True
+        cfg = MagicMock()
+        mock_load.return_value = cfg
+
+        mock_api = MagicMock()
+        mock_api.my_subscribe.return_value = {
+            "status": 1,
+            "data": [
+                {
+                    "order_id": 711681,
+                    "order_num": "B091916380301732651",
+                    "stadium_name": "翔安校区健身房",
+                    "audit_status": 1,
+                    "audit_status_text": "已预约"
+                },
+                {
+                    "order_id": 711666,
+                    "order_num": "B091916244242540244",
+                    "stadium_name": "翔安校区健身房",
+                    "audit_status": 3,
+                    "audit_status_text": "已取消"
+                }
+            ]
+        }
+        mock_api.order_details.return_value = {
+            "status": 1,
+            "data": {
+                "order_id": 711681,
+                "venue_name": "爱秋体育馆健身房",
+                "details": [
+                    {
+                        "date": "2026-09-19",
+                        "week": "周六",
+                        "interval_time": "19:30-21:00",
+                        "area_name": "爱秋体育馆健身房"
+                    }
+                ]
+            }
+        }
+        mock_api_cls.return_value = mock_api
+
+        handler = GymStatusHandler.__new__(GymStatusHandler)
+        handler._send_json = MagicMock()
+
+        handler._handle_my_orders()
+        handler._send_json.assert_called_once()
+        code, body = handler._send_json.call_args[0]
+        self.assertEqual(code, 200)
+        self.assertEqual(body["status"], "ok")
+        self.assertTrue(body["success"])
+        self.assertEqual(len(body["orders"]), 2)
+        self.assertEqual(body["active_count"], 1)
+        # 验证有效订单已被富化时段信息
+        active_order = body["orders"][0]
+        self.assertEqual(active_order["date"], "2026-09-19")
+        self.assertEqual(active_order["interval_time"], "19:30-21:00")
+        self.assertEqual(active_order["venue_name"], "爱秋体育馆健身房")
+
+    @patch("xdty_booking.web.server.load_config")
+    @patch("xdty_booking.web.server.ensure_session")
+    def test_handle_my_orders_session_invalid(self, mock_ensure, mock_load):
+        mock_ensure.return_value = False
+        cfg = MagicMock()
+        mock_load.return_value = cfg
+
+        handler = GymStatusHandler.__new__(GymStatusHandler)
+        handler._send_json = MagicMock()
+
+        handler._handle_my_orders()
+        handler._send_json.assert_called_once()
+        code, body = handler._send_json.call_args[0]
+        self.assertEqual(code, 200)
+        self.assertFalse(body["success"])
+        self.assertFalse(body["session_valid"])
+        self.assertIn("登录凭证已失效", body["info"])
+
+

@@ -210,3 +210,37 @@ def test_get_uid_auto(mock_client):
         assert uid == "1073507"
         assert api._uid == "1073507"
 
+def test_order_details(mock_client):
+    api = XdtyApi(mock_client)
+    with patch.object(mock_client.session, 'post') as mock_post:
+        mock_resp = Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "status": 1,
+            "info": "查询成功",
+            "data": {
+                "order_id": 711681,
+                "order_num": "B091916380301732651",
+                "details": [
+                    {
+                        "details_id": 712305,
+                        "area_name": "爱秋体育馆健身房",
+                        "date": "2026-09-19",
+                        "week": "周六",
+                        "interval_time": "19:30-21:00",
+                        "status": 1
+                    }
+                ]
+            }
+        }
+        mock_post.return_value = mock_resp
+
+        res = api.order_details(order_id=711681, order_num="B091916380301732651")
+        assert res["status"] == 1
+        assert res["data"]["order_id"] == 711681
+        assert res["data"]["details"][0]["interval_time"] == "19:30-21:00"
+        assert mock_post.called
+        call_args = mock_post.call_args
+        assert "orderDetails" in call_args[0][0]
+        assert call_args[1]["data"]["order_id"] == 711681
+

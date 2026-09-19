@@ -1,5 +1,5 @@
 @echo off
-title ÏÃ´óÌåÓı¹İ×Ô¶¯Ô¤Ô¼¹¤¾ß - ¹¹½¨¶ÀÁ¢·¢²¼°ü
+title Ã´Ô¶Ô¤Ô¼ - 
 cd /d "%~dp0"
 if exist "packaging\build_release.py" (
     set SCRIPT_PATH=packaging\build_release.py
@@ -9,10 +9,10 @@ if exist "packaging\build_release.py" (
 )
 
 echo ==============================================================
-echo        ÏÃ´óÌåÓı¹İ×Ô¶¯Ô¤Ô¼¹¤¾ß - ±¾µØÒ»¼ü´ò°ü·¢²¼³ÌĞò
+echo        Ã´Ô¶Ô¤Ô¼ - Ò»
 echo ==============================================================
 echo.
-echo ÕıÔÚÆô¶¯×Ô¶¯»¯¹¹½¨Á÷³Ì£¬ÇëÉÔºò...
+echo Ô¶Ì£Ôº...
 echo.
 
 python "%SCRIPT_PATH%"
@@ -20,7 +20,7 @@ python "%SCRIPT_PATH%"
 if %errorlevel% neq 0 (
     echo.
     echo ==============================================================
-    echo [´íÎó] ´ò°ü¹¹½¨Î´Ë³ÀûÍê³É£¬Çë¼ì²éÉÏ·½µÄ´íÎóÌáÊ¾¡£
+    echo [] Î´Ë³É£Ï·Ä´Ê¾
     echo ==============================================================
     pause
     exit /b %errorlevel%
@@ -28,11 +28,11 @@ if %errorlevel% neq 0 (
 
 echo.
 echo ==============================================================
-echo [³É¹¦] ´ò°ü·¢²¼Á÷³ÌÒÑÈ«²¿Ë³ÀûÍê³É£¡
+echo [É¹] È«Ë³É£
 echo.
-echo ²úÎïÉú³ÉÎ»ÖÃÎ»ÓÚÏîÄ¿¸ùÄ¿Â¼µÄ dist ÎÄ¼ş¼ĞÖĞ£º
-echo   1. ÂÌÉ«½âÑ¹¼´ÓÃ°æ: dist\XMU_Gym_Booking\
-echo   2. Ãâ°²×°Ñ¹Ëõ°ü:   dist\XMU_Gym_Booking_v1.1.2_Portable_Windows_x64.zip
+echo Î»Î»Ä¿Ä¿Â¼ dist Ä¼Ğ£
+echo   1. É«Ñ¹Ã°: dist\XMU_Gym_Booking\
+echo   2. â°²×°Ñ¹:   dist\XMU_Gym_Booking_v1.2.1_Portable_Windows_x64.zip
 echo ==============================================================
 echo.
 pause
