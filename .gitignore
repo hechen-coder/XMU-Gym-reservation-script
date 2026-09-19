@@ -16,6 +16,7 @@ Output/
 *.c
 xdty_booking/security_source_backup/
 pyarmor_runtime_*/
+*一键构建发布包.bat
 
 # ==============================================================================
 # 2. Python 运行时、字节码与测试缓存
