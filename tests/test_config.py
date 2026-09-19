@@ -84,4 +84,32 @@ def test_ensure_config_path_auto_creates(tmp_path, monkeypatch):
     assert os.path.exists(target)
     assert res == target
 
+def test_load_config_with_single_space_indentation_auto_repair(tmp_path):
+    """验证当配置文件存在单空格缩进错误时，系统能自动容错修复并成功读取"""
+    config_file = tmp_path / "config.yaml"
+    # 模拟用户遇到的典型缩进问题：第 5 行仅有 1 个前导空格
+    malformed_yaml = """auth:
+  auth_params:
+    token: 6F3AB4EF7E8278980F46182707F08616
+  uid: '1073507'
+ uid: '1073507'
+target:
+  preferred_time: 19:30-21:00
+"""
+    config_file.write_text(malformed_yaml, encoding="utf-8")
+    cfg = load_config(str(config_file))
+    assert cfg.auth.uid == "1073507"
+    assert cfg.target.preferred_time == "19:30-21:00"
+
+def test_load_config_with_broken_yaml_fallback(tmp_path):
+    """验证当配置文件严重损坏时，系统自动降级使用默认模板或默认实例而不崩溃"""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("::: !!! INVALID YAML SYNTAX !!! :::", encoding="utf-8")
+    
+    cfg = load_config(str(config_file))
+    assert isinstance(cfg, AppConfig)
+    # 默认值保障系统不崩溃
+    assert cfg.target.stadium_id == 16
+
+
 

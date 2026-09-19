@@ -848,7 +848,14 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             })
         except Exception as e:
             logger.error(f"获取通知配置异常: {e}", exc_info=True)
-            self._send_json(500, {"status": "error", "success": False, "info": str(e), "message": str(e)})
+            self._send_json(200, {
+                "status": "error",
+                "success": False,
+                "enabled": False,
+                "channel": "email",
+                "email": "",
+                "info": str(e)
+            })
 
     def _handle_notify_config_post(self, body_json: Optional[dict] = None, params: Optional[dict] = None):
         try:
@@ -1009,10 +1016,10 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             })
         except Exception as e:
             logger.error(f"查询我的预约异常: {e}", exc_info=True)
-            self._send_json(500, {
+            self._send_json(200, {
                 "status": "error",
                 "success": False,
-                "info": f"服务器内部错误: {e}",
+                "info": f"查询我的预约异常: {e}",
                 "orders": []
             })
 

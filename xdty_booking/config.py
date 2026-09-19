@@ -1,7 +1,104 @@
 import os
 import yaml
+import logging
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
+
+logger = logging.getLogger(__name__)
+
+def safe_load_yaml_file(config_path: str) -> Dict[str, Any]:
+    """
+    安全读取并解析 YAML 配置文件，具备行级容错与自动修复机制。
+    针对用户手动编辑、复制粘贴时常见的格式错误（如单空格前缀、混合缩进、重复键等）：
+    1. 首先尝试原生 safe_load；
+    2. 若解析失败 (yaml.YAMLError)，自动对缩进行级智能对齐容错；
+    3. 若修复成功，自动将修复后的合规 YAML 回写至原文件；
+    4. 若文件严重损坏彻底无法修复，自动尝试读取同级 config.example.yaml 兜底，绝不抛出阻断性崩溃。
+    """
+    if not os.path.exists(config_path):
+        return {}
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except Exception as e:
+        logger.error(f"读取配置文件 '{config_path}' 失败: {e}")
+        return {}
+
+    # 1. 尝试原生安全解析
+    try:
+        data = yaml.safe_load(content)
+        if isinstance(data, dict):
+            return data
+        if data is None:
+            return {}
+    except yaml.YAMLError as err:
+        logger.warning(f"⚠️ 配置文件 '{config_path}' 存在 YAML 语法或缩进格式问题: {err}，正在启动自动容错修复...")
+
+    # 2. 尝试行级智能缩进修正
+    try:
+        lines = content.splitlines()
+        fixed_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                fixed_lines.append(line)
+                continue
+            leading_spaces = len(line) - len(line.lstrip(" "))
+            # 常见手误：1 个前导空格（通常原本应为 2 空格子项）
+            if leading_spaces == 1:
+                fixed_lines.append("  " + line.lstrip(" "))
+            # 常见手误：3 个前导空格（通常原本应为 4 空格深层子项）
+            elif leading_spaces == 3:
+                fixed_lines.append("    " + line.lstrip(" "))
+            else:
+                fixed_lines.append(line)
+
+        fixed_content = "\n".join(fixed_lines)
+        fixed_data = yaml.safe_load(fixed_content)
+        if isinstance(fixed_data, dict):
+            logger.info(f"✅ 已成功自动修复 '{config_path}' 的缩进格式问题，正在回写规范化配置...")
+            try:
+                with open(config_path, "w", encoding="utf-8") as f:
+                    yaml.dump(fixed_data, f, allow_unicode=True, sort_keys=False)
+            except Exception as write_err:
+                logger.debug(f"回写自动修复配置出现小警告: {write_err}")
+            return fixed_data
+    except Exception as fix_err:
+        logger.debug(f"行级缩进自动修正未完全成功: {fix_err}")
+
+    # 3. 尝试去除报错行或极端异常行进行容错
+    try:
+        clean_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or ":" in stripped:
+                clean_lines.append(line)
+        clean_content = "\n".join(clean_lines)
+        clean_data = yaml.safe_load(clean_content)
+        if isinstance(clean_data, dict):
+            logger.info(f"✅ 已通过异常行过滤策略成功修复 '{config_path}'！")
+            return clean_data
+    except Exception:
+        pass
+
+    # 4. 终极兜底：尝试读取 config.example.yaml
+    dir_name = os.path.dirname(config_path)
+    example_path = os.path.join(dir_name, "config.example.yaml") if dir_name else "config/config.example.yaml"
+    if not os.path.exists(example_path):
+        example_path = "config/config.example.yaml"
+    if os.path.exists(example_path):
+        try:
+            with open(example_path, "r", encoding="utf-8") as ef:
+                example_data = yaml.safe_load(ef)
+                if isinstance(example_data, dict):
+                    logger.warning(f"⚠️ 配置文件 '{config_path}' 严重损坏，已自动应用默认配置模板 '{example_path}' 兜底运行。")
+                    return example_data
+        except Exception:
+            pass
+
+    logger.error(f"❌ 配置文件 '{config_path}' 无法解析且未能加载模板，使用默认空字典兜底。")
+    return {}
 
 @dataclass
 class AuthConfig:
@@ -92,8 +189,7 @@ def _build_dataclass(cls, data: Optional[Dict[str, Any]]):
 def load_config(config_path: str = "config/config.yaml") -> AppConfig:
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Config file not found: {config_path}")
-    with open(config_path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
+    data = safe_load_yaml_file(config_path)
     
     auth_data = data.get("auth", {})
     target_data = data.get("target", {})
@@ -197,18 +293,28 @@ def save_phpsessid(config_path: str, new_token: str) -> bool:
         return False
 
     import re
-    with open(config_path, "r", encoding="utf-8") as f:
-        content = f.read()
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except Exception:
+        content = ""
 
     pattern = r'(phpsessid:\s*)(["\']?[a-zA-Z0-9_-]*["\']?)'
     if re.search(pattern, content):
         new_content = re.sub(pattern, rf'\g<1>"{new_token}"', content, count=1)
-    else:
-        data = yaml.safe_load(content) or {}
-        if "auth" not in data:
-            data["auth"] = {}
-        data["auth"]["phpsessid"] = new_token
-        new_content = yaml.dump(data, allow_unicode=True, sort_keys=False)
+        try:
+            yaml.safe_load(new_content)
+            with open(config_path, "w", encoding="utf-8") as f:
+                f.write(new_content)
+            return True
+        except yaml.YAMLError:
+            pass
+
+    data = safe_load_yaml_file(config_path)
+    if "auth" not in data or not isinstance(data["auth"], dict):
+        data["auth"] = {}
+    data["auth"]["phpsessid"] = new_token
+    new_content = yaml.dump(data, allow_unicode=True, sort_keys=False)
 
     with open(config_path, "w", encoding="utf-8") as f:
         f.write(new_content)
@@ -221,10 +327,7 @@ def save_auth_params(config_path: str, params: Dict[str, Any]) -> bool:
     if not os.path.exists(config_path):
         return False
 
-    with open(config_path, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    data = yaml.safe_load(content) or {}
+    data = safe_load_yaml_file(config_path)
     if "auth" not in data or not isinstance(data["auth"], dict):
         data["auth"] = {}
     if "auth_params" not in data["auth"] or not isinstance(data["auth"]["auth_params"], dict):
@@ -250,10 +353,7 @@ def save_target_and_scheduler_config(
     if not os.path.exists(config_path):
         return False
 
-    with open(config_path, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    data = yaml.safe_load(content) or {}
+    data = safe_load_yaml_file(config_path)
     if not isinstance(data, dict):
         data = {}
 
@@ -285,10 +385,7 @@ def save_notify_config(
     if not os.path.exists(config_path):
         return False
 
-    with open(config_path, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    data = yaml.safe_load(content) or {}
+    data = safe_load_yaml_file(config_path)
     if not isinstance(data, dict):
         data = {}
 
