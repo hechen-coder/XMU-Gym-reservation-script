@@ -7,7 +7,14 @@ from email.mime.text import MIMEText
 from typing import Dict, Any, Optional
 import requests
 
-from xdty_booking.config import NotifyConfig
+from xdty_booking.config import (
+    NotifyConfig,
+    DEFAULT_DEVELOPER_EMAIL_SENDER,
+    DEFAULT_DEVELOPER_EMAIL_AUTH,
+    DEFAULT_DEVELOPER_SMTP_HOST,
+    DEFAULT_DEVELOPER_SMTP_PORT,
+    DEFAULT_DEVELOPER_SMTP_SSL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,15 +40,15 @@ class Notifier:
             return results
 
         full_title = f"{self.cfg.title_prefix} {title}".strip()
-        channel = (self.cfg.channel or "pushplus").lower()
+        channel = (self.cfg.channel or "email").lower()
         html = html_content or content.replace("\n", "<br>")
 
         # PushPlus
         if channel in ("pushplus", "all") and self.cfg.pushplus.token:
             results["pushplus"] = self._send_pushplus(full_title, html)
 
-        # 邮件 (Email)
-        if channel in ("email", "all") and self.cfg.email.sender and self.cfg.email.to_addrs:
+        # 邮件 (Email - 支持开发者统一内置发信箱，用户仅需配置接收邮箱)
+        if channel in ("email", "all") and self.cfg.email and self.cfg.email.to_addrs:
             results["email"] = self._send_email(full_title, content, html)
 
         # Server酱
@@ -80,29 +87,41 @@ class Notifier:
             return False
 
     def _send_email(self, title: str, text_content: str, html_content: str) -> bool:
-        """SMTP 邮件通知通道"""
+        """SMTP 邮件通知通道 (支持开发者统一发件箱与自定义发件箱)"""
         ec = self.cfg.email
+        sender = ec.sender or DEFAULT_DEVELOPER_EMAIL_SENDER
+        password = ec.password or DEFAULT_DEVELOPER_EMAIL_AUTH
+        smtp_host = ec.smtp_host or DEFAULT_DEVELOPER_SMTP_HOST
+        smtp_port = ec.smtp_port or DEFAULT_DEVELOPER_SMTP_PORT
+        use_ssl = ec.ssl if ec.ssl is not None else DEFAULT_DEVELOPER_SMTP_SSL
+        to_addrs = ec.to_addrs
+
+        if not to_addrs:
+            logger.warning("未指定邮件接收人列表 (to_addrs 为空)，跳过邮件发送")
+            return False
+
         try:
+            from email.utils import formataddr
             msg = MIMEMultipart("alternative")
             msg["Subject"] = Header(title, "utf-8")
-            msg["From"] = ec.sender
-            msg["To"] = ",".join(ec.to_addrs)
+            msg["From"] = formataddr(("厦大体育馆预约助手", sender))
+            msg["To"] = ",".join(to_addrs)
 
             part_text = MIMEText(text_content, "plain", "utf-8")
             part_html = MIMEText(html_content, "html", "utf-8")
             msg.attach(part_text)
             msg.attach(part_html)
 
-            if ec.ssl or ec.smtp_port == 465:
-                server = smtplib.SMTP_SSL(ec.smtp_host, ec.smtp_port, timeout=10)
+            if use_ssl or smtp_port == 465:
+                server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10)
             else:
-                server = smtplib.SMTP(ec.smtp_host, ec.smtp_port, timeout=10)
+                server = smtplib.SMTP(smtp_host, smtp_port, timeout=10)
                 server.starttls()
 
-            server.login(ec.sender, ec.password)
-            server.sendmail(ec.sender, ec.to_addrs, msg.as_string())
+            server.login(sender, password)
+            server.sendmail(sender, to_addrs, msg.as_string())
             server.quit()
-            logger.info(f"✅ 邮件通知发送成功！已投递至: {ec.to_addrs}")
+            logger.info(f"✅ 邮件通知发送成功！已投递至: {to_addrs}")
             return True
         except Exception as e:
             logger.error(f"❌ 邮件发送失败: {e}")

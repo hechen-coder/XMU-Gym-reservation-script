@@ -76,3 +76,43 @@ def test_notifier_booking_success_template():
         _, kwargs = mock_send.call_args
         assert "19:30-21:00" in kwargs["title"]
         assert "翔安校区健身房" in kwargs["content"]
+
+def test_notifier_developer_unified_sender(tmp_path):
+    """测试买家仅填写自己的 QQ 邮箱时，系统自动注入开发者统一发信箱进行投递"""
+    from xdty_booking.config import (
+        DEFAULT_DEVELOPER_EMAIL_SENDER,
+        DEFAULT_DEVELOPER_EMAIL_AUTH,
+        save_notify_config,
+        load_config
+    )
+
+    # 1. 验证 load_config 智能注入
+    cfg_file = str(tmp_path / "test_config.yaml")
+    with open(cfg_file, "w", encoding="utf-8") as f:
+        f.write("notify:\n  enabled: true\n  email:\n    to_addrs: ['customer@qq.com']\n")
+
+    cfg = load_config(cfg_file)
+    assert cfg.notify.channel == "email"
+    assert cfg.notify.email.sender == DEFAULT_DEVELOPER_EMAIL_SENDER
+    assert cfg.notify.email.password == DEFAULT_DEVELOPER_EMAIL_AUTH
+    assert cfg.notify.email.to_addrs == ["customer@qq.com"]
+
+    # 2. 验证 Notifier 实际投递调用
+    notifier = Notifier(cfg.notify)
+    with patch("smtplib.SMTP_SSL") as mock_smtp_ssl:
+        mock_server = MagicMock()
+        mock_smtp_ssl.return_value = mock_server
+
+        res = notifier.send("抢票提醒", "测试内容")
+        assert res.get("email") is True
+        mock_server.login.assert_called_once_with(DEFAULT_DEVELOPER_EMAIL_SENDER, DEFAULT_DEVELOPER_EMAIL_AUTH)
+        assert mock_server.sendmail.called
+        args, _ = mock_server.sendmail.call_args
+        assert args[0] == DEFAULT_DEVELOPER_EMAIL_SENDER
+        assert args[1] == ["customer@qq.com"]
+
+    # 3. 验证 save_notify_config 持久化
+    save_notify_config(cfg_file, enabled=False, email="new_customer@qq.com")
+    cfg_after = load_config(cfg_file)
+    assert cfg_after.notify.enabled is False
+    assert cfg_after.notify.email.to_addrs == ["new_customer@qq.com"]

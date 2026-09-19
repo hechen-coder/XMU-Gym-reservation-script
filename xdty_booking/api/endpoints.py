@@ -290,3 +290,10 @@ class XdtyApi:
         """查询我的预约记录 (同时作为轻量级心跳探针)"""
         resp = self.client.post("public/index.php/index/stadium/mySubscribe", data={"p": page})
         return resp.json()
+
+    def order_details(self, order_id: int, order_num: str = "") -> Dict[str, Any]:
+        """查询预约订单详情 (获取预约场地、日期、时段等详细数据)"""
+        data = {"order_id": order_id, "order_num": order_num}
+        referer = f"https://xdty.xmu.edu.cn/bdlp_h5_fitness_test/view/stadium/order.html?id={order_id}"
+        resp = self.client.post("public/index.php/index/stadium/orderDetails", data=data, referer=referer)
+        return resp.json()

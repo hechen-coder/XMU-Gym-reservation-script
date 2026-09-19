@@ -11,7 +11,8 @@ from xdty_booking.config import (
     load_config,
     save_phpsessid,
     save_auth_params,
-    save_target_and_scheduler_config
+    save_target_and_scheduler_config,
+    save_notify_config
 )
 from xdty_booking.api.client import ApiClient
 from xdty_booking.api.endpoints import XdtyApi
@@ -465,6 +466,11 @@ def query_gym_status(config_path: Optional[str] = None, auto_heal: bool = True) 
             "target_time": cfg.scheduler.target_time,
             "fallback_nearest": cfg.scheduler.fallback_nearest,
             "pre_check_minutes": cfg.scheduler.pre_check_minutes
+        },
+        "notify_config": {
+            "enabled": cfg.notify.enabled,
+            "channel": cfg.notify.channel,
+            "email": cfg.notify.email.to_addrs[0] if cfg.notify.email.to_addrs else ""
         }
     }
 
@@ -647,6 +653,12 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             self._handle_snipe_stop()
         elif parsed.path.startswith("/api/campus/switch"):
             self._handle_campus_switch(body_json, params)
+        elif parsed.path.startswith("/api/notify/config"):
+            self._handle_notify_config_post(body_json, params)
+        elif parsed.path.startswith("/api/notify/test"):
+            self._handle_notify_test(body_json, params)
+        elif parsed.path.startswith("/api/orders/my") or parsed.path.startswith("/api/my_orders"):
+            self._handle_my_orders()
         else:
             self._send_json(404, {"error": "Not Found"})
 
@@ -821,6 +833,188 @@ class GymStatusHandler(BaseHTTPRequestHandler):
         except Exception as e:
             logger.error(f"切换校区异常: {e}", exc_info=True)
             self._send_json(500, {"success": False, "info": str(e)})
+
+    def _handle_notify_config_get(self):
+        try:
+            c_path = _ensure_config_path(_GLOBAL_CONFIG_PATH)
+            cfg = load_config(c_path)
+            to_email = cfg.notify.email.to_addrs[0] if cfg.notify.email.to_addrs else ""
+            self._send_json(200, {
+                "status": "ok",
+                "success": True,
+                "enabled": cfg.notify.enabled,
+                "channel": cfg.notify.channel,
+                "email": to_email
+            })
+        except Exception as e:
+            logger.error(f"获取通知配置异常: {e}", exc_info=True)
+            self._send_json(500, {"status": "error", "success": False, "info": str(e), "message": str(e)})
+
+    def _handle_notify_config_post(self, body_json: Optional[dict] = None, params: Optional[dict] = None):
+        try:
+            body_json = body_json or {}
+            params = params or {}
+            c_path = _ensure_config_path(_GLOBAL_CONFIG_PATH)
+            enabled = body_json.get("enabled")
+            if enabled is None and "enabled" in params:
+                enabled = str(params["enabled"][0]).lower() in ("true", "1", "yes")
+
+            email = body_json.get("email")
+            if email is None and "email" in params:
+                email = params["email"][0]
+
+            channel = body_json.get("channel")
+            if channel is None and "channel" in params:
+                channel = params["channel"][0]
+            if channel is None and email:
+                channel = "email"
+
+            save_notify_config(c_path, enabled=enabled, email=email, channel=channel)
+            cfg = load_config(c_path)
+            to_email = cfg.notify.email.to_addrs[0] if cfg.notify.email.to_addrs else ""
+            self._send_json(200, {
+                "status": "ok",
+                "success": True,
+                "enabled": cfg.notify.enabled,
+                "channel": cfg.notify.channel,
+                "email": to_email,
+                "info": "通知设置已成功保存！"
+            })
+        except Exception as e:
+            logger.error(f"保存通知配置异常: {e}", exc_info=True)
+            self._send_json(500, {"status": "error", "success": False, "info": str(e), "message": str(e)})
+
+    def _handle_notify_test(self, body_json: Optional[dict] = None, params: Optional[dict] = None):
+        try:
+            c_path = _ensure_config_path(_GLOBAL_CONFIG_PATH)
+            cfg = load_config(c_path)
+
+            temp_email = None
+            if body_json and body_json.get("email"):
+                temp_email = str(body_json["email"]).strip()
+            elif params and params.get("email"):
+                temp_email = str(params["email"][0]).strip()
+
+            if temp_email:
+                cfg.notify.email.to_addrs = [temp_email]
+                cfg.notify.channel = "email"
+                cfg.notify.enabled = True
+
+            if not cfg.notify.email.to_addrs:
+                self._send_json(400, {
+                    "status": "error",
+                    "success": False,
+                    "info": "请先输入接收通知的 QQ 邮箱地址！",
+                    "message": "请先输入接收通知的 QQ 邮箱地址！"
+                })
+                return
+
+            if not cfg.notify.email.sender:
+                from xdty_booking.config import (
+                    DEFAULT_DEVELOPER_EMAIL_SENDER,
+                    DEFAULT_DEVELOPER_EMAIL_AUTH,
+                    DEFAULT_DEVELOPER_SMTP_HOST,
+                    DEFAULT_DEVELOPER_SMTP_PORT,
+                    DEFAULT_DEVELOPER_SMTP_SSL
+                )
+                cfg.notify.email.sender = DEFAULT_DEVELOPER_EMAIL_SENDER
+                cfg.notify.email.password = DEFAULT_DEVELOPER_EMAIL_AUTH
+                cfg.notify.email.smtp_host = DEFAULT_DEVELOPER_SMTP_HOST
+                cfg.notify.email.smtp_port = DEFAULT_DEVELOPER_SMTP_PORT
+                cfg.notify.email.ssl = DEFAULT_DEVELOPER_SMTP_SSL
+
+            cfg.notify.enabled = True
+            notifier = Notifier(cfg.notify)
+            results = notifier.send_test()
+            ok = results.get("email", False) or results.get("pushplus", False) or any(results.values())
+            if ok:
+                self._send_json(200, {
+                    "status": "ok",
+                    "success": True,
+                    "info": f"🎉 测试通知已成功投递至 {cfg.notify.email.to_addrs[0]}！请检查邮箱收信及手机微信【QQ邮箱提醒】大卡片。"
+                })
+            else:
+                self._send_json(500, {
+                    "status": "error",
+                    "success": False,
+                    "info": "❌ 发送测试通知失败，请检查网络或确认邮箱地址是否正确。",
+                    "message": "❌ 发送测试通知失败，请检查网络或确认邮箱地址是否正确。"
+                })
+        except Exception as e:
+            logger.error(f"发送测试通知异常: {e}", exc_info=True)
+            self._send_json(500, {"status": "error", "success": False, "info": f"测试发送异常: {e}", "message": str(e)})
+
+    def _handle_my_orders(self):
+        try:
+            c_path = _ensure_config_path(_GLOBAL_CONFIG_PATH)
+            cfg = load_config(c_path)
+            client = ApiClient(base_url=cfg.base_url)
+            api = XdtyApi(client, uid=cfg.auth.uid if cfg.auth.uid else None)
+            session_mgr = SessionManager(
+                api,
+                phpsessid=cfg.auth.phpsessid,
+                auth_params=cfg.auth.auth_params,
+                config_path=c_path
+            )
+            is_valid = ensure_session(cfg, session_mgr, client, c_path)
+            if not is_valid:
+                self._send_json(200, {
+                    "status": "error",
+                    "success": False,
+                    "info": "当前登录凭证已失效，请先登录后再查看我的预约！",
+                    "orders": [],
+                    "session_valid": False
+                })
+                return
+
+            sub_res = api.my_subscribe(page=1)
+            raw_orders = sub_res.get("data", []) if isinstance(sub_res, dict) else []
+            if not isinstance(raw_orders, list):
+                raw_orders = []
+
+            orders = []
+            for item in raw_orders:
+                order = dict(item)
+                # 若为有效预约(audit_status == 1)，自动查询订单详情获取时段
+                if order.get("audit_status") == 1 and order.get("order_id"):
+                    try:
+                        detail_res = api.order_details(order["order_id"], order.get("order_num", ""))
+                        if isinstance(detail_res, dict) and detail_res.get("status") == 1:
+                            d_data = detail_res.get("data", {})
+                            if isinstance(d_data, dict):
+                                details_list = d_data.get("details", [])
+                                if details_list and isinstance(details_list, list):
+                                    f_det = details_list[0]
+                                    order["date"] = f_det.get("date", "")
+                                    order["week"] = f_det.get("week", "")
+                                    order["interval_time"] = f_det.get("interval_time", "")
+                                    order["area_name"] = f_det.get("area_name", "")
+                                if d_data.get("venue_name"):
+                                    order["venue_name"] = d_data.get("venue_name")
+                                if d_data.get("name"):
+                                    order["user_name"] = d_data.get("name")
+                    except Exception as det_err:
+                        logger.warning(f"获取订单 {order.get('order_id')} 详情异常: {det_err}")
+
+                orders.append(order)
+
+            active_orders = [o for o in orders if o.get("audit_status") == 1]
+            self._send_json(200, {
+                "status": "ok",
+                "success": True,
+                "orders": orders,
+                "active_count": len(active_orders),
+                "session_valid": True,
+                "info": f"查询成功，共拉取到 {len(orders)} 条记录（其中有效预约 {len(active_orders)} 场）"
+            })
+        except Exception as e:
+            logger.error(f"查询我的预约异常: {e}", exc_info=True)
+            self._send_json(500, {
+                "status": "error",
+                "success": False,
+                "info": f"服务器内部错误: {e}",
+                "orders": []
+            })
 
     def _handle_qr_init(self):
         global _cas_client, _qr_login_result, _is_logging_in, _has_login_failed
@@ -1033,6 +1227,19 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             params = parse_qs(parsed.query)
             self._handle_campus_switch({}, params)
 
+        # 11.2 获取通知设置 API
+        elif path.startswith("/api/notify/config"):
+            self._handle_notify_config_get()
+
+        # 11.3 发送测试通知 API
+        elif path.startswith("/api/notify/test"):
+            params = parse_qs(parsed.query)
+            self._handle_notify_test(params=params)
+
+        # 11.4 查看我的预约记录 API
+        elif path.startswith("/api/orders/my") or path.startswith("/api/my_orders"):
+            self._handle_my_orders()
+
         # 12. Web 仪表板首页 (体育馆场次查询与预约大厅)
         else:
             try:
@@ -1080,7 +1287,12 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                     "session_valid": False,
                     "has_auth_params": has_auth,
                     "info": f"系统连接或数据解析异常: {e}",
-                    "groups": []
+                    "groups": [],
+                    "notify_config": {
+                        "enabled": False,
+                        "channel": "email",
+                        "email": ""
+                    }
                 }
                 self._send_html(200, render_dashboard(fallback_data))
 
