@@ -32,7 +32,7 @@ echo [成功] 打包发布流程已全部顺利完成！
 echo.
 echo 产物生成位置位于项目根目录的 dist 文件夹中：
 echo   1. 绿色解压即用版: dist\XMU_Gym_Booking\
-echo   2. 免安装压缩包:   dist\XMU_Gym_Booking_v1.1.1_Portable_Windows_x64.zip
+echo   2. 免安装压缩包:   dist\XMU_Gym_Booking_v1.1.2_Portable_Windows_x64.zip
 echo ==============================================================
 echo.
 pause

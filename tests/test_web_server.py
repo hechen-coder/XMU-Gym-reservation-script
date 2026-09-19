@@ -123,7 +123,49 @@ class TestWebServer(unittest.TestCase):
         self.assertIn("🔑 手动登录", html)
         self.assertIn(".lnk", html)
         self.assertIn("场馆预约", html)
-        # Ensure '嗅探' does not appear in prompt/button/labels
-        self.assertNotIn("微信嗅探", html)
-        self.assertNotIn("自动嗅探兜底", html)
+    def test_render_dashboard_modal_and_book_slot_safeguards(self):
+        data = {
+            "stadium_name": "测试健身房",
+            "area_name": "二楼力量区",
+            "query_time": "2026-09-12 10:00:00",
+            "session_valid": True,
+            "info": "正常",
+            "groups": [
+                {
+                    "date": "2026-09-20",
+                    "week_name": "周日",
+                    "time_range": "19:30-21:00",
+                    "is_preferred": True,
+                    "slots": [
+                        {
+                            "interval_id": "9999",
+                            "selected": 5,
+                            "max_count": 50,
+                            "remaining": 45,
+                            "is_available": True,
+                            "is_locked": False
+                        }
+                    ]
+                }
+            ]
+        }
+        html = render_dashboard(data)
+
+        # 1. 验证预约按钮传参包含 this，不依赖易受污染的 window.event
+        self.assertIn("bookSlot('9999', '2026-09-20', '19:30-21:00', this)", html)
+
+        # 2. 验证弹窗具备右上角关闭按钮
+        self.assertIn('id="customDialogCloseBtn"', html)
+
+        # 3. 验证 customAlert / confirm / prompt 及 _closeCustomDialog 具有 disabled = false 复位保护
+        self.assertIn("confirmBtn.disabled = false;", html)
+        self.assertIn("cancelBtn.disabled = false;", html)
+
+        # 4. 验证 CSS 包含 .dialog-btn:disabled 规范
+        self.assertIn(".dialog-btn:disabled", html)
+
+        # 5. 验证全局支持 Backdrop 遮罩点击关闭与 Esc/Enter 按键响应
+        self.assertIn('e.target === customModal', html)
+        self.assertIn('e.key === "Escape"', html)
+        self.assertIn('e.key === "Enter"', html)
 

@@ -14,6 +14,7 @@ import types
 import time
 import webbrowser
 import threading
+import atexit
 
 # 瘦身关键优化：注入 Mock cv2 模块，避免 ddddocr 强依赖 136MB 的 OpenCV 庞大二进制库
 if "cv2" not in sys.modules:
@@ -109,6 +110,9 @@ def interactive_menu():
             break
 
         if not choice or choice == "1":
+            if not check_single_instance():
+                input("\n按回车键返回主菜单...")
+                continue
             print("\n>>> 正在启动 Web 控制台 (http://localhost:8080)...")
             _open_browser_delayed("http://localhost:8080", delay_seconds=0.8)
             sys.argv = [sys.argv[0], "web"]
@@ -459,8 +463,83 @@ def _patch_pywebview_frozen_loader():
         pass
 
 
+_SINGLE_INSTANCE_MUTEX = None
+
+
+def check_single_instance(app_title: str = "厦大体育馆自动预约工具", show_dialog: bool = True) -> bool:
+    """
+    使用 Windows 原生命名互斥体 (Named Mutex) 实现严格的单实例互斥检测。
+    如果检测到已有实例在运行：
+    1. 自动查找首个实例的主窗口并将其恢复/置顶至屏幕最前端；
+    2. 弹出系统级置顶提示框提醒用户“程序已在运行中（已打开）”；
+    3. 返回 False 通知调用方立即退出，彻底杜绝重复进程多开。
+    """
+    global _SINGLE_INSTANCE_MUTEX
+    if sys.platform != "win32":
+        return True
+
+    try:
+        import ctypes
+
+        ERROR_ALREADY_EXISTS = 183
+        MUTEX_NAME = "Global\\XMU_Gym_Booking_Desktop_SingleInstance_Mutex"
+
+        kernel32 = ctypes.windll.kernel32
+        user32 = ctypes.windll.user32
+
+        # 尝试创建命名互斥体
+        mutex = kernel32.CreateMutexW(None, False, MUTEX_NAME)
+        last_error = kernel32.GetLastError()
+
+        if last_error == ERROR_ALREADY_EXISTS:
+            # 尝试查找已运行的前台窗口并唤醒恢复
+            try:
+                hwnd = user32.FindWindowW(None, app_title)
+                if hwnd:
+                    # SW_RESTORE = 9
+                    user32.ShowWindow(hwnd, 9)
+                    user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
+
+            if show_dialog:
+                # 弹出系统级置顶提示框 (MB_OK | MB_ICONINFORMATION | MB_TOPMOST)
+                MB_OK = 0x00000000
+                MB_ICONINFORMATION = 0x00000040
+                MB_TOPMOST = 0x00040000
+                user32.MessageBoxW(
+                    None,
+                    f"【{app_title}】已在运行中（已打开）！\n\n已为您自动切换至已打开的窗口，请勿重复运行多个实例。",
+                    f"{app_title} - 运行提示",
+                    MB_OK | MB_ICONINFORMATION | MB_TOPMOST
+                )
+            return False
+
+        _SINGLE_INSTANCE_MUTEX = mutex
+        atexit.register(release_single_instance)
+        return True
+    except Exception as e:
+        _log_gui_msg(f"check_single_instance exception: {e}")
+        return True
+
+
+def release_single_instance():
+    """显式释放当前进程持有的互斥体句柄"""
+    global _SINGLE_INSTANCE_MUTEX
+    if _SINGLE_INSTANCE_MUTEX and sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.kernel32.CloseHandle(_SINGLE_INSTANCE_MUTEX)
+        except Exception:
+            pass
+        _SINGLE_INSTANCE_MUTEX = None
+
+
 def launch_desktop_window(port: int = 8080):
     """启动本地 Web 服务并在前台唤起无黑框独立桌面原生窗口"""
+    if not check_single_instance():
+        sys.exit(0)
+
     from xdty_booking.web.server import run_server
 
     # 1. 在后台守护线程启动 Web 核心服务

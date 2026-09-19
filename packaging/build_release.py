@@ -29,7 +29,7 @@ if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
 os.environ["NO_PROXY"] = "*"
 os.environ["no_proxy"] = "*"
 
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 APP_NAME = "XMU_Gym_Booking"
 PACKAGING_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(PACKAGING_DIR)

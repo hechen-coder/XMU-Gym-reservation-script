@@ -58,7 +58,7 @@ python main.py web
 
 #### 1. 获取解压绿色便携包
 前往本项目的 **Releases 发布页面**（或直接进入项目下的 `dist/` 文件夹）：
-- 下载压缩包：`XMU_Gym_Booking_v1.1.1_Portable_Windows_x64.zip`；
+- 下载压缩包：`XMU_Gym_Booking_v1.1.2_Portable_Windows_x64.zip`；
 - 将压缩包完整解压到电脑任意文件夹（例如解压到桌面）。
 
 #### 2. 双击运行主程序

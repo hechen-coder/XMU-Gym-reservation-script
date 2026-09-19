@@ -52,7 +52,8 @@ jobs:
           name: Release ${{ github.ref_name }}
           draft: false
           prerelease: false
-          generate_release_notes: true
+          body_path: packaging/版本更新说明.md
+          generate_release_notes: false
           files: |
             dist/*.zip
             dist/*.exe

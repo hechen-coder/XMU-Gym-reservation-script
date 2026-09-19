@@ -7,6 +7,7 @@
 1. 首次运行自动生成 RSA-2048 密钥对 (私钥 developer_private_key.pem + 公钥 client_public_key.pem)
 2. 根据买家机器码 (HWID)、有效期与备注，进行 RSA-SHA256 数字签名
 3. 生成标准的 license.lic 文件，并输出便于微信粘贴的 Base64 激活码文本
+# python tools/keygen.py
 """
 
 import os

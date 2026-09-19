@@ -1088,7 +1088,13 @@ def run_server(port: int = 8080, config_path: str = "config/config.yaml"):
     global _GLOBAL_CONFIG_PATH
     _GLOBAL_CONFIG_PATH = config_path
 
-    server = HTTPServer(("0.0.0.0", port), GymStatusHandler)
+    try:
+        server = HTTPServer(("0.0.0.0", port), GymStatusHandler)
+    except OSError as e:
+        logger.warning(f"本地 Web 服务端口 {port} 已被占用，服务已处于运行中: {e}")
+        print(f"\n⚠️ 本地 Web 服务端口 {port} 已被占用，服务已在运行中。\n")
+        return
+
     logger.info(f"🚀 健身房实时监控与预约 Web 服务已启动: http://localhost:{port}")
     logger.info(f"👉 网页一键预约与监控大厅: http://localhost:{port}/")
     logger.info(f"👉 企业微信扫码登录直达: http://localhost:{port}/login")

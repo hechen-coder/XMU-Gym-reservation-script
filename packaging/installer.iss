@@ -5,7 +5,7 @@
 
 #define MyAppName "厦大体育馆自动预约工具"
 #define MyAppEnglishName "XMU_Gym_Booking"
-#define MyAppVersion "1.1.1"
+#define MyAppVersion "1.1.2"
 #define MyAppPublisher "XMU Open Source Community"
 #define MyAppURL "https://github.com/hechen-coder/XMU-Gym-reservation-script"
 #define MyAppExeName "XMU_Gym_Booking.exe"
@@ -55,8 +55,7 @@ Source: "..\dist\XMU_Gym_Booking\*"; DestDir: "{app}"; Flags: ignoreversion recu
 Name: "{group}\{#MyAppName} (控制中心)"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"
 Name: "{group}\🌐 启动网页预约控制台"; Filename: "{app}\{#MyAppExeName}"; Parameters: "web"; IconFilename: "{app}\{#MyAppExeName}"
 Name: "{group}\⏰ 启动早 7 点准点抢票"; Filename: "{app}\{#MyAppExeName}"; Parameters: "schedule"; IconFilename: "{app}\{#MyAppExeName}"
-Name: "{group}\🔑 微信免抓包登录"; Filename: "{app}\{#MyAppExeName}"; Parameters: "harvest"; IconFilename: "{app}\{#MyAppExeName}"
-Name: "{group}\📄 查看小白使用说明"; Filename: "{app}\小白下载安装与使用说明.txt"
+Name: "{group}\🌐 项目主页与在线说明"; Filename: "{#MyAppURL}"
 Name: "{group}\卸载 {#MyAppName}"; Filename: "{uninstallexe}"
 
 ; 桌面快捷方式 (默认以网页版直观打开)

@@ -128,7 +128,7 @@ def render_dashboard(data: dict) -> str:
                 bar_color = "#10b981" if rem > 10 else "#f59e0b"
                 capacity_display = f"{sel} / {max_c} ({pct}%)"
                 progress_html = f'<div class="progress-fill" style="width: {pct}%; background: {bar_color};"></div>'
-                btn_html = f'<button class="btn-book" onclick="bookSlot(\'{s.get("interval_id")}\', \'{g.get("date")}\', \'{g.get("time_range")}\')">⚡ 立刻预约</button>'
+                btn_html = f'<button class="btn-book" onclick="bookSlot(\'{s.get("interval_id")}\', \'{g.get("date")}\', \'{g.get("time_range")}\', this)">⚡ 立刻预约</button>'
             else:
                 avail_cls = "full"
                 badge_text = "已约满"
@@ -916,6 +916,28 @@ def render_dashboard(data: dict) -> str:
             background: #059669;
             box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.25);
         }}
+        .dialog-btn:disabled {{
+            opacity: 0.55;
+            cursor: not-allowed !important;
+            pointer-events: none;
+            box-shadow: none !important;
+            transform: none !important;
+        }}
+        .dialog-close-btn {{
+            background: none;
+            border: none;
+            font-size: 18px;
+            color: #94a3b8;
+            cursor: pointer;
+            padding: 4px;
+            line-height: 1;
+            border-radius: 6px;
+            transition: all 0.15s ease;
+        }}
+        .dialog-close-btn:hover {{
+            color: #1e293b;
+            background: #f1f5f9;
+        }}
     </style>
 </head>
 <body>
@@ -1000,8 +1022,11 @@ def render_dashboard(data: dict) -> str:
     <div id="customDialogModal" class="custom-dialog-overlay" style="display: none;">
         <div class="custom-dialog-card">
             <div class="custom-dialog-header">
-                <div id="customDialogIcon" class="custom-dialog-icon">💡</div>
-                <h3 id="customDialogTitle" class="custom-dialog-title">提示</h3>
+                <div style="display: flex; align-items: center; gap: 12px; flex: 1;">
+                    <div id="customDialogIcon" class="custom-dialog-icon">💡</div>
+                    <h3 id="customDialogTitle" class="custom-dialog-title">提示</h3>
+                </div>
+                <button type="button" class="dialog-close-btn" id="customDialogCloseBtn" onclick="_closeCustomDialog(false)" title="关闭">✕</button>
             </div>
             <div id="customDialogContent" class="custom-dialog-content"></div>
             <div id="customDialogInputWrap" class="custom-dialog-input-wrap" style="display: none;">
@@ -1266,6 +1291,16 @@ def render_dashboard(data: dict) -> str:
         function _closeCustomDialog(result) {{
             const modal = document.getElementById("customDialogModal");
             if (modal) modal.style.display = "none";
+            const confirmBtn = document.getElementById("customDialogConfirmBtn");
+            const cancelBtn = document.getElementById("customDialogCancelBtn");
+            if (confirmBtn) {{
+                confirmBtn.disabled = false;
+                confirmBtn.onclick = null;
+            }}
+            if (cancelBtn) {{
+                cancelBtn.disabled = false;
+                cancelBtn.onclick = null;
+            }}
             if (_dialogResolve) {{
                 const cb = _dialogResolve;
                 _dialogResolve = null;
@@ -1285,8 +1320,14 @@ def render_dashboard(data: dict) -> str:
 
                 if (!modal) {{
                     showToast(message, type === "success" || type === "info");
-                    resolve();
+                    resolve(true);
                     return;
+                }}
+
+                if (_dialogResolve) {{
+                    const oldResolve = _dialogResolve;
+                    _dialogResolve = null;
+                    oldResolve(false);
                 }}
 
                 _dialogResolve = resolve;
@@ -1309,11 +1350,17 @@ def render_dashboard(data: dict) -> str:
                 titleEl.innerText = title || titles[type] || "系统提示";
                 contentEl.innerText = message;
                 if (inputWrap) inputWrap.style.display = "none";
-                if (cancelBtn) cancelBtn.style.display = "none";
+                if (cancelBtn) {{
+                    cancelBtn.style.display = "none";
+                    cancelBtn.disabled = false;
+                }}
                 if (confirmBtn) {{
+                    confirmBtn.style.display = "inline-block";
+                    confirmBtn.disabled = false;
                     confirmBtn.innerText = "我知道了";
                     confirmBtn.className = "dialog-btn dialog-btn-confirm" + (type === "error" ? " danger" : (type === "success" ? " success" : ""));
                     confirmBtn.onclick = () => _closeCustomDialog(true);
+                    confirmBtn.focus();
                 }}
 
                 modal.style.display = "flex";
@@ -1335,6 +1382,12 @@ def render_dashboard(data: dict) -> str:
                     return;
                 }}
 
+                if (_dialogResolve) {{
+                    const oldResolve = _dialogResolve;
+                    _dialogResolve = null;
+                    oldResolve(false);
+                }}
+
                 _dialogResolve = resolve;
 
                 const isDanger = !!options.isDanger;
@@ -1351,13 +1404,17 @@ def render_dashboard(data: dict) -> str:
 
                 if (cancelBtn) {{
                     cancelBtn.style.display = "inline-block";
+                    cancelBtn.disabled = false;
                     cancelBtn.innerText = cancelText;
                     cancelBtn.onclick = () => _closeCustomDialog(false);
                 }}
                 if (confirmBtn) {{
+                    confirmBtn.style.display = "inline-block";
+                    confirmBtn.disabled = false;
                     confirmBtn.innerText = confirmText;
                     confirmBtn.className = "dialog-btn dialog-btn-confirm" + (isDanger ? " danger" : "");
                     confirmBtn.onclick = () => _closeCustomDialog(true);
+                    confirmBtn.focus();
                 }}
 
                 modal.style.display = "flex";
@@ -1380,6 +1437,12 @@ def render_dashboard(data: dict) -> str:
                     return;
                 }}
 
+                if (_dialogResolve) {{
+                    const oldResolve = _dialogResolve;
+                    _dialogResolve = null;
+                    oldResolve(null);
+                }}
+
                 _dialogResolve = resolve;
 
                 iconEl.className = "custom-dialog-icon info";
@@ -1390,6 +1453,15 @@ def render_dashboard(data: dict) -> str:
                 if (inputWrap && inputEl) {{
                     inputWrap.style.display = "block";
                     inputEl.value = defaultValue;
+                    inputEl.onkeydown = (e) => {{
+                        if (e.key === "Enter") {{
+                            e.preventDefault();
+                            _closeCustomDialog(inputEl.value.trim());
+                        }} else if (e.key === "Escape") {{
+                            e.preventDefault();
+                            _closeCustomDialog(null);
+                        }}
+                    }};
                     setTimeout(() => {{
                         inputEl.focus();
                         inputEl.select();
@@ -1398,10 +1470,13 @@ def render_dashboard(data: dict) -> str:
 
                 if (cancelBtn) {{
                     cancelBtn.style.display = "inline-block";
+                    cancelBtn.disabled = false;
                     cancelBtn.innerText = "取消";
                     cancelBtn.onclick = () => _closeCustomDialog(null);
                 }}
                 if (confirmBtn) {{
+                    confirmBtn.style.display = "inline-block";
+                    confirmBtn.disabled = false;
                     confirmBtn.innerText = "保存提交";
                     confirmBtn.className = "dialog-btn dialog-btn-confirm";
                     confirmBtn.onclick = () => {{
@@ -1707,6 +1782,11 @@ def render_dashboard(data: dict) -> str:
         async function startSchedulerTask() {{
             const payload = getSchedulerPayload();
             showToast("⏳ 正在开启定时预约任务...", true);
+            const btnStart = document.getElementById("btnStartScheduler");
+            if (btnStart) {{
+                btnStart.disabled = true;
+                btnStart.innerText = "⏳ 正在开启...";
+            }}
             try {{
                 const res = await fetch("/api/scheduler/start", {{
                     method: "POST",
@@ -1719,9 +1799,17 @@ def render_dashboard(data: dict) -> str:
                     fetchSchedulerStatus();
                     setTimeout(() => location.reload(), 1000);
                 }} else {{
+                    if (btnStart) {{
+                        btnStart.disabled = false;
+                        btnStart.innerText = "🚀 开启定时预约";
+                    }}
                     await customAlert(data.info || "未知错误", "error", "开启定时预约失败");
                 }}
             }} catch(e) {{
+                if (btnStart) {{
+                    btnStart.disabled = false;
+                    btnStart.innerText = "🚀 开启定时预约";
+                }}
                 await customAlert("开启定时预约请求出错: " + e, "error");
             }}
         }}
@@ -1729,6 +1817,11 @@ def render_dashboard(data: dict) -> str:
         async function stopSchedulerTask() {{
             if (!await customConfirm("确认取消当前正在预约的早7点自动预约任务吗？", "取消定时预约", {{ isDanger: true, confirmText: "确认取消" }})) return;
             showToast("⏳ 正在取消预约任务...", true);
+            const btnStop = document.getElementById("btnStopScheduler");
+            if (btnStop) {{
+                btnStop.disabled = true;
+                btnStop.innerText = "⏳ 正在取消...";
+            }}
             try {{
                 const res = await fetch("/api/scheduler/stop", {{
                     method: "POST"
@@ -1739,9 +1832,17 @@ def render_dashboard(data: dict) -> str:
                     fetchSchedulerStatus();
                     setTimeout(() => location.reload(), 800);
                 }} else {{
+                    if (btnStop) {{
+                        btnStop.disabled = false;
+                        btnStop.innerText = "⏹️ 取消 / 停止预约";
+                    }}
                     await customAlert(data.info || "未知错误", "error", "取消失败");
                 }}
             }} catch(e) {{
+                if (btnStop) {{
+                    btnStop.disabled = false;
+                    btnStop.innerText = "⏹️ 取消 / 停止预约";
+                }}
                 await customAlert("取消请求出错: " + e, "error");
             }}
         }}
@@ -1901,6 +2002,11 @@ def render_dashboard(data: dict) -> str:
             }}
 
             showToast("⏳ 正在启动实时捡漏监听...", true);
+            const btnStart = document.getElementById("btnStartSnipe");
+            if (btnStart) {{
+                btnStart.disabled = true;
+                btnStart.innerText = "⏳ 正在启动...";
+            }}
             try {{
                 const res = await fetch("/api/snipe/start", {{
                     method: "POST",
@@ -1920,9 +2026,17 @@ def render_dashboard(data: dict) -> str:
                         snipePollStatusTimer = setInterval(fetchSnipeStatus, 1500);
                     }}
                 }} else {{
+                    if (btnStart) {{
+                        btnStart.disabled = false;
+                        btnStart.innerText = "🚀 启动捡漏监听";
+                    }}
                     await customAlert(data.info || "未知错误", "error", "启动失败");
                 }}
             }} catch(e) {{
+                if (btnStart) {{
+                    btnStart.disabled = false;
+                    btnStart.innerText = "🚀 启动捡漏监听";
+                }}
                 await customAlert("启动捡漏请求出错: " + e, "error");
             }}
         }}
@@ -1930,6 +2044,11 @@ def render_dashboard(data: dict) -> str:
         async function stopSnipeTask() {{
             if (!await customConfirm("确认停止当前正在进行的捡漏监听任务吗？", "停止捡漏监听", {{ isDanger: true, confirmText: "停止监听" }})) return;
             showToast("⏳ 正在停止捡漏任务...", true);
+            const btnStop = document.getElementById("btnStopSnipe");
+            if (btnStop) {{
+                btnStop.disabled = true;
+                btnStop.innerText = "⏳ 正在停止...";
+            }}
             try {{
                 const res = await fetch("/api/snipe/stop", {{
                     method: "POST"
@@ -1939,9 +2058,17 @@ def render_dashboard(data: dict) -> str:
                     showToast(data.info || "已停止捡漏监听任务", true);
                     fetchSnipeStatus();
                 }} else {{
+                    if (btnStop) {{
+                        btnStop.disabled = false;
+                        btnStop.innerText = "⏹️ 停止捡漏监听";
+                    }}
                     await customAlert(data.info || "未知错误", "error", "停止失败");
                 }}
             }} catch(e) {{
+                if (btnStop) {{
+                    btnStop.disabled = false;
+                    btnStop.innerText = "⏹️ 停止捡漏监听";
+                }}
                 await customAlert("停止请求出错: " + e, "error");
             }}
         }}
@@ -2007,14 +2134,17 @@ def render_dashboard(data: dict) -> str:
             }}
         }}
 
-        async function bookSlot(intervalId, date, timeRange) {{
+        async function bookSlot(intervalId, date, timeRange, targetBtn = null) {{
+            // 准确获取被点击的立刻预约按钮，必须在 await customConfirm 之前获取，绝不能在 await 之后使用 window.event.target
+            const originBtn = targetBtn || (window.event && window.event.target ? (window.event.target.closest('.btn-book') || (window.event.target.classList.contains('btn-book') ? window.event.target : null)) : null);
+
             if (!await customConfirm(`确认立即抢购【${{date}} ${{timeRange}}】的健身房名额吗？`, "预约确认", {{ confirmText: "立即抢购", cancelText: "取消" }})) return;
-            const btn = event ? event.target : null;
+
             let originText = "";
-            if (btn) {{
-                btn.disabled = true;
-                originText = btn.innerText;
-                btn.innerText = "预约提交中...";
+            if (originBtn) {{
+                originBtn.disabled = true;
+                originText = originBtn.innerText;
+                originBtn.innerText = "预约提交中...";
             }}
 
             try {{
@@ -2032,7 +2162,7 @@ def render_dashboard(data: dict) -> str:
                             const rel = await relR.json();
                             if (rel.success) {{
                                 showToast("🎉 续期成功，正在重新提交预约...", true);
-                                setTimeout(() => bookSlot(intervalId, date, timeRange), 600);
+                                setTimeout(() => bookSlot(intervalId, date, timeRange, originBtn), 600);
                                 return;
                             }} else {{
                                 if (await customConfirm("快速续登未成功，是否启动小程序进行手动登录？", "凭证失效提醒", {{ confirmText: "启动小程序", cancelText: "取消" }})) {{
@@ -2042,18 +2172,18 @@ def render_dashboard(data: dict) -> str:
                             }}
                         }} catch(e) {{}}
                     }}
-                    await customAlert(res.info || '名额已被抢完或网络异常', "warning", "预约未成功");
-                    if (btn) {{
-                        btn.disabled = false;
-                        btn.innerText = originText;
+                    if (originBtn) {{
+                        originBtn.disabled = false;
+                        originBtn.innerText = originText;
                     }}
+                    await customAlert(res.info || '名额已被抢完或网络异常', "warning", "预约未成功");
                 }}
             }} catch(err) {{
-                await customAlert("请求发生异常: " + err, "error");
-                if (btn) {{
-                    btn.disabled = false;
-                    btn.innerText = originText;
+                if (originBtn) {{
+                    originBtn.disabled = false;
+                    originBtn.innerText = originText;
                 }}
+                await customAlert("请求发生异常: " + err, "error");
             }}
         }}
 
@@ -2081,11 +2211,21 @@ def render_dashboard(data: dict) -> str:
         function openLicenseModal() {{
             const modal = document.getElementById("licenseModalOverlay");
             if (modal) modal.style.display = "flex";
+            const btn = document.getElementById("btnSubmitActivation");
+            if (btn) {{
+                btn.disabled = false;
+                btn.innerText = "🚀 立即验证并激活";
+            }}
         }}
 
         function closeLicenseModal() {{
             const modal = document.getElementById("licenseModalOverlay");
             if (modal) modal.style.display = "none";
+            const btn = document.getElementById("btnSubmitActivation");
+            if (btn) {{
+                btn.disabled = false;
+                btn.innerText = "🚀 立即验证并激活";
+            }}
         }}
 
         function handleLicenseFileImport(e) {{
@@ -2160,6 +2300,64 @@ def render_dashboard(data: dict) -> str:
                 }}
             }}
         }}
+
+        // 全局模态框点击外部背景 (Backdrop) 自动关闭
+        document.addEventListener("click", function(e) {{
+            const customModal = document.getElementById("customDialogModal");
+            if (customModal && e.target === customModal) {{
+                _closeCustomDialog(false);
+            }}
+            const licModal = document.getElementById("licenseModalOverlay");
+            if (licModal && e.target === licModal) {{
+                closeLicenseModal();
+            }}
+            const schedModal = document.getElementById("schedulerModal");
+            if (schedModal && e.target === schedModal) {{
+                closeSchedulerModal();
+            }}
+            const snpModal = document.getElementById("snipeModal");
+            if (snpModal && e.target === snpModal) {{
+                closeSnipeModal();
+            }}
+        }});
+
+        // 全局键盘快捷响应 (Esc 退出活动弹窗，Enter 确认弹窗)
+        document.addEventListener("keydown", function(e) {{
+            if (e.key === "Escape") {{
+                const customModal = document.getElementById("customDialogModal");
+                if (customModal && customModal.style.display === "flex") {{
+                    _closeCustomDialog(false);
+                    return;
+                }}
+                const licModal = document.getElementById("licenseModalOverlay");
+                if (licModal && licModal.style.display === "flex") {{
+                    closeLicenseModal();
+                    return;
+                }}
+                const schedModal = document.getElementById("schedulerModal");
+                if (schedModal && schedModal.style.display === "flex") {{
+                    closeSchedulerModal();
+                    return;
+                }}
+                const snpModal = document.getElementById("snipeModal");
+                if (snpModal && snpModal.style.display === "flex") {{
+                    closeSnipeModal();
+                    return;
+                }}
+            }} else if (e.key === "Enter") {{
+                const customModal = document.getElementById("customDialogModal");
+                if (customModal && customModal.style.display === "flex") {{
+                    const inputWrap = document.getElementById("customDialogInputWrap");
+                    const isPrompt = inputWrap && inputWrap.style.display !== "none";
+                    if (isPrompt) {{
+                        const inputEl = document.getElementById("customDialogInput");
+                        _closeCustomDialog(inputEl ? inputEl.value.trim() : "");
+                    }} else {{
+                        _closeCustomDialog(true);
+                    }}
+                }}
+            }}
+        }});
     </script>
 
     <!-- 软件授权中心弹窗 (一机一码防护) -->
