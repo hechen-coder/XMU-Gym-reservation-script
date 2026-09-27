@@ -112,4 +112,56 @@ def test_load_config_with_broken_yaml_fallback(tmp_path):
     assert cfg.target.stadium_id == 16
 
 
+def test_scheduler_target_time_normalization():
+    from xdty_booking.config import SchedulerConfig
+    # 标准 HH:MM:SS
+    sc = SchedulerConfig(target_time="07:01:34")
+    assert sc.target_time == "07:01:34"
+
+    # 单数位小时容错
+    sc2 = SchedulerConfig(target_time="7:01:34")
+    assert sc2.target_time == "07:01:34"
+
+    # 全角中文冒号容错
+    sc3 = SchedulerConfig(target_time="7：01：34")
+    assert sc3.target_time == "07:01:34"
+
+    # 简写无秒数自动补全 00
+    sc4 = SchedulerConfig(target_time="07:00")
+    assert sc4.target_time == "07:00:00"
+
+    # 包含首尾空格
+    sc5 = SchedulerConfig(target_time="  07:01:34  ")
+    assert sc5.target_time == "07:01:34"
+
+    # 非法格式应抛异常
+    with pytest.raises(ValueError, match="定时预约时间格式应为 HH:MM:SS"):
+        SchedulerConfig(target_time="25:00:00")
+
+    with pytest.raises(ValueError, match="定时预约时间格式应为 HH:MM:SS"):
+        SchedulerConfig(target_time="invalid_time")
+
+
+def test_save_target_and_scheduler_custom_target_time(tmp_path):
+    from xdty_booking.config import save_target_and_scheduler_config
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("""
+scheduler:
+  target_time: "07:00:00"
+target:
+  preferred_time: "12:00-13:30"
+""", encoding="utf-8")
+
+    # 保存自定义 7：01：34
+    res = save_target_and_scheduler_config(
+        str(config_file),
+        scheduler_updates={"target_time": "7：01：34"}
+    )
+    assert res is True
+    cfg = load_config(str(config_file))
+    assert cfg.scheduler.target_time == "07:01:34"
+    assert cfg.target.preferred_time == "12:00-13:30"
+
+
+
 

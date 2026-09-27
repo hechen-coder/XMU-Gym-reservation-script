@@ -132,8 +132,8 @@ class TestSchedulerWeb(unittest.TestCase):
         # 2. POST config
         handler._send_json.reset_mock()
         payload = {
-            "target": {"preferred_time": "16:30-18:00"},
-            "scheduler": {"target_time": "07:00:00"}
+            "target": {"preferred_time": "12:00-13:30"},
+            "scheduler": {"target_time": "7:01:34"}
         }
         with patch("xdty_booking.web.server._GLOBAL_CONFIG_PATH", self.config_path):
             handler._handle_scheduler_config_save(payload, {})
@@ -143,7 +143,8 @@ class TestSchedulerWeb(unittest.TestCase):
             self.assertTrue(body["success"])
 
         cfg = load_config(self.config_path)
-        self.assertEqual(cfg.target.preferred_time, "16:30-18:00")
+        self.assertEqual(cfg.target.preferred_time, "12:00-13:30")
+        self.assertEqual(cfg.scheduler.target_time, "07:01:34")
 
         # 3. GET status
         handler._send_json.reset_mock()
@@ -191,6 +192,10 @@ class TestSchedulerWeb(unittest.TestCase):
         self.assertIn("switchCampus", html)
         self.assertIn("🏢 翔安校区", html)
         self.assertIn("🏛️ 思明校区", html)
+        self.assertIn("12:00-13:30", html)
+        self.assertIn("schedTargetTimeInput", html)
+        self.assertIn("setTargetTime", html)
+        self.assertIn("07:00:00 (常规)", html)
 
         # 1.1 Siming campus dashboard rendering
         data_siming = dict(data)

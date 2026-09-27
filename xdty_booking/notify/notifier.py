@@ -1,9 +1,14 @@
+import base64
+import hashlib
+import hmac
 import json
 import logging
 import smtplib
+import time
 from email.header import Header
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from html import escape
 from typing import Dict, Any, Optional
 import requests
 
@@ -21,7 +26,7 @@ logger = logging.getLogger(__name__)
 class Notifier:
     """
     统一即时通知分发引擎：
-    支持 PushPlus (微信推送)、邮件 (SMTP)、Server酱 Turbo、Bark (iOS 锁屏)。
+    支持 PushPlus (微信推送)、邮件 (SMTP)、Server酱 Turbo、Bark (iOS 锁屏)、飞书自定义机器人。
     """
     def __init__(self, config: NotifyConfig):
         self.cfg = config
@@ -58,6 +63,10 @@ class Notifier:
         # Bark
         if channel in ("bark", "all") and self.cfg.bark.device_key:
             results["bark"] = self._send_bark(full_title, content)
+
+        # 飞书 (Feishu 自定义群机器人，支持签名校验)
+        if channel in ("feishu", "all") and self.cfg.feishu and self.cfg.feishu.webhook_url:
+            results["feishu"] = self._send_feishu(full_title, content)
 
         if not results:
             logger.warning("未配置任何可用的通知通道或凭证为空，请检查 config.yaml 中的 notify 配置")
@@ -166,6 +175,34 @@ class Notifier:
             logger.error(f"❌ Bark 推送异常: {e}")
             return False
 
+    def _send_feishu(self, title: str, content: str) -> bool:
+        """飞书自定义机器人文本推送，支持可选的签名校验。"""
+        try:
+            payload = {
+                "msg_type": "text",
+                "content": {"text": f"{title}\n\n{content}"},
+            }
+            if self.cfg.feishu.secret:
+                timestamp = str(int(time.time()))
+                # 飞书使用「秒级时间戳 + 换行 + 密钥」作为 HMAC key，消息为空。
+                key = f"{timestamp}\n{self.cfg.feishu.secret}".encode("utf-8")
+                payload["timestamp"] = timestamp
+                payload["sign"] = base64.b64encode(
+                    hmac.new(key, b"", hashlib.sha256).digest()
+                ).decode("ascii")
+            resp = requests.post(self.cfg.feishu.webhook_url, json=payload, timeout=10)
+            resp.raise_for_status()
+            result = resp.json()
+            if isinstance(result, dict) and result.get("code") == 0:
+                logger.info("✅ 飞书推送成功！")
+                return True
+            code = result.get("code") if isinstance(result, dict) else None
+            logger.error("❌ 飞书推送失败，错误码: %s（请检查机器人安全设置及配置）", code)
+        except Exception as e:
+            # requests 的异常可能含完整 Webhook URL，避免将机器人凭证写入日志。
+            logger.error("❌ 飞书推送异常: %s", type(e).__name__)
+        return False
+
     def send_booking_success(self, slot_info: Dict[str, Any], order_info: Optional[Dict[str, Any]] = None) -> Dict[str, bool]:
         """
         预约成功专用模板通知
@@ -189,16 +226,24 @@ class Notifier:
 ------------------------------------------------
 请在微信小程序【厦大体育】或系统历史记录中核对。"""
 
+        safe = {
+            "mode": escape(str(mode)),
+            "venue": escape(str(venue)),
+            "area": escape(str(area_name)),
+            "date": escape(str(date)),
+            "time": escape(str(time_slot)),
+            "interval": escape(str(slot_info.get("interval_id", "N/A")))
+        }
         html = f"""
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 500px; padding: 20px; border-radius: 10px; background: #f0fdf4; border: 1px solid #bbf7d0;">
             <h2 style="color: #166534; margin-top: 0;">🎉 厦大体育馆抢票成功！</h2>
             <p style="color: #374151; font-size: 14px;">您的场地已成功完成预约下单，详细信息如下：</p>
             <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px;">
-                <tr><td style="padding: 6px 0; color: #6b7280;">预约模式:</td><td style="font-weight: bold; color: #1f2937;">{mode}</td></tr>
-                <tr><td style="padding: 6px 0; color: #6b7280;">场馆名称:</td><td style="font-weight: bold; color: #1f2937;">{venue} - {area_name}</td></tr>
-                <tr><td style="padding: 6px 0; color: #6b7280;">预约日期:</td><td style="font-weight: bold; color: #1f2937;">{date}</td></tr>
-                <tr><td style="padding: 6px 0; color: #6b7280;">预约时段:</td><td style="font-weight: bold; color: #15803d; font-size: 16px;">{time_slot}</td></tr>
-                <tr><td style="padding: 6px 0; color: #6b7280;">场次 ID:</td><td style="color: #1f2937;">{slot_info.get('interval_id', 'N/A')}</td></tr>
+                <tr><td style="padding: 6px 0; color: #6b7280;">预约模式:</td><td style="font-weight: bold; color: #1f2937;">{safe['mode']}</td></tr>
+                <tr><td style="padding: 6px 0; color: #6b7280;">场馆名称:</td><td style="font-weight: bold; color: #1f2937;">{safe['venue']} - {safe['area']}</td></tr>
+                <tr><td style="padding: 6px 0; color: #6b7280;">预约日期:</td><td style="font-weight: bold; color: #1f2937;">{safe['date']}</td></tr>
+                <tr><td style="padding: 6px 0; color: #6b7280;">预约时段:</td><td style="font-weight: bold; color: #15803d; font-size: 16px;">{safe['time']}</td></tr>
+                <tr><td style="padding: 6px 0; color: #6b7280;">场次 ID:</td><td style="color: #1f2937;">{safe['interval']}</td></tr>
             </table>
             <div style="margin-top: 16px; padding: 10px; background: #ffffff; border-radius: 6px; font-size: 13px; color: #4b5563;">
                 💡 提醒：请准时到场锻炼打卡。如计划变动请在规定时间内退票，避免违约。

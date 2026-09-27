@@ -103,6 +103,7 @@ def test_booking_engine_with_interval_id():
         status="available"
     )
     mock_resp = Mock()
+    mock_resp.status = 1
     mock_resp.find_by_id.return_value = (Mock(week="6", week_name="周六", time_range="19:30-21:00"), slot)
     api.get_intervals.return_value = mock_resp
     api.choose_verify.return_value = {"status": 1}

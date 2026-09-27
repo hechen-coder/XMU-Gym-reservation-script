@@ -11,6 +11,14 @@ from xdty_booking.notify.notifier import Notifier
 
 logger = logging.getLogger(__name__)
 
+def _skip_course_occupied(info: str = "计划时段被教学排课占用或场馆保留") -> Dict[str, Any]:
+    return {
+        "success": False,
+        "skipped": True,
+        "reason": "course_occupied",
+        "info": f"{info}，已跳过当天预约，不改约其他时段"
+    }
+
 class BookingEngine:
     """
     高并发极速抢票与捡漏执行引擎：
@@ -47,6 +55,11 @@ class BookingEngine:
         """
         提交指定时段的预校验、验证码获取及极速下单流程
         """
+        if slot.is_course_occupied:
+            return _skip_course_occupied()
+        if slot.is_locked:
+            return {"success": False, "info": "该场次当前不可预约"}
+
         target = self.cfg.target
         week = group.week if group else "5"
         week_name = group.week_name if group else "周五"
@@ -71,8 +84,10 @@ class BookingEngine:
             )
             logger.info(f"预校验结果: {verify_res}")
             if isinstance(verify_res, dict) and verify_res.get("status") == 0:
-                info_msg = verify_res.get("info", "选场预校验未通过")
+                info_msg = str(verify_res.get("info") or "选场预校验未通过")
                 logger.warning(f"服务端预校验未通过: {info_msg}")
+                if any(word in info_msg for word in ("课程", "排课", "教学占用", "教学排课占用")):
+                    return _skip_course_occupied(info_msg)
                 return {
                     "success": False,
                     "info": info_msg,
@@ -88,11 +103,13 @@ class BookingEngine:
         for i in range(3):
             try:
                 img_bytes = self.api.get_captcha()
-                captcha_code = self.solver.solve(img_bytes)
+                captcha_code = str(self.solver.solve(img_bytes) or "")
                 if len(captcha_code) == 4:
                     break
             except Exception as e:
                 logger.warning(f"获取/识别验证码重试第 {i+1} 次: {e}")
+        if len(captcha_code) != 4:
+            return {"success": False, "info": "验证码获取或识别失败，未提交预约", "reason": "captcha_failed"}
 
         # 3. 提交预约订单并支持即时重试
         retry_count = max(1, self.cfg.scheduler.retry_count)
@@ -142,13 +159,17 @@ class BookingEngine:
                     return result
 
                 info_msg = str(order_res.get("info", "")) if isinstance(order_res, dict) else ""
+                if any(word in info_msg for word in ("课程", "排课", "教学占用", "教学排课占用")):
+                    return _skip_course_occupied(info_msg)
                 if "验证码" in info_msg:
                     logger.warning("提示验证码不匹配，正在重新获取新验证码...")
                     try:
                         time.sleep(0.2)
                         img_bytes = self.api.get_captcha()
-                        captcha_code = self.solver.solve(img_bytes)
-                        logger.info(f"重新拉取并识别出新验证码: '{captcha_code}'")
+                        new_code = str(self.solver.solve(img_bytes) or "")
+                        if len(new_code) == 4:
+                            captcha_code = new_code
+                            logger.info(f"重新拉取并识别出新验证码: '{captcha_code}'")
                     except Exception as e:
                         logger.error(f"重新获取验证码发生异常: {e}")
                 elif "频繁" in info_msg:
@@ -206,7 +227,12 @@ class BookingEngine:
         except Exception as e:
             err = f"查询场次列表网络异常: {e}"
             logger.error(err)
-            return {"success": False, "info": err}
+            return {"success": False, "info": err, "reason": "query_failed"}
+
+        if getattr(intervals, "status", 1) != 1:
+            err = f"查询场次失败: {getattr(intervals, 'info', '') or '服务端返回异常'}"
+            logger.error(err)
+            return {"success": False, "info": err, "reason": "query_failed"}
 
         # 2. 如果直接指定了 interval_id，优先以该 ID 预约
         if interval_id:
@@ -217,8 +243,11 @@ class BookingEngine:
                 if isinstance(res, tuple):
                     group, slot = res
             if slot:
+                if (target_date and slot.date != target_date) or (preferred_time and group and group.time_range != preferred_time):
+                    return {"success": False, "info": "所选场次与日期或时段不一致", "reason": "invalid_selection"}
                 logger.info(f"按指定场次ID [{interval_id}] 预约: {slot.area_name} ({slot.date})")
                 return self._submit_slot(slot, group, mode=mode)
+            return {"success": False, "info": "所选场次不存在", "reason": "slot_missing"}
 
         # 3. 匹配首选目标时段
         group = None
@@ -252,6 +281,8 @@ class BookingEngine:
                 )
 
         # 4. 判断首选时段名额
+        if slot and slot.is_course_occupied:
+            return _skip_course_occupied()
         preferred_available = bool(slot and slot.is_available and (slot.remaining_capacity > 0 or not check_availability))
         
         if slot and preferred_available:
@@ -273,7 +304,7 @@ class BookingEngine:
             if not slot:
                 err = f"未找到指定时段场次: 日期 {target_date_str}, 时段 {target_time_str}"
                 logger.error(err)
-                return {"success": False, "info": err}
+                return {"success": False, "info": err, "reason": "slot_missing"}
             if getattr(slot, "is_locked", False) or slot.status == "locked" or (slot.selected == 0 and not slot.is_available):
                 msg = f"该时段为教学排课占用，暂不对外开放个人预约 (0/{slot.max_count})"
             else:
@@ -295,10 +326,12 @@ class BookingEngine:
         if not candidates:
             err = f"未找到指定时段场次: 日期 {target_date_str}, 时段 {target_time_str}"
             logger.error(err)
-            return {"success": False, "info": err, "full": True}
+            return {"success": False, "info": err, "full": True, "reason": "slot_missing"}
 
         for c_group, c_slot in candidates:
             if slot and c_slot.interval_id == slot.interval_id:
+                continue
+            if c_slot.is_course_occupied:
                 continue
             logger.info(
                 f"⚡ 自动降级尝试就近时段: {c_group.time_range} ({c_slot.area_name}), "
@@ -355,6 +388,12 @@ class BookingEngine:
                 logger.info(f"🎉 捡漏成功！已完成预约: {res.get('info')}")
                 if status_callback:
                     status_callback(attempt, f"🎉 捡漏成功: {res.get('info')}")
+                return res
+
+            if res.get("skipped"):
+                logger.warning(f"⚠️ 目标时段已被课程占用，已停止捡漏: {res.get('info')}")
+                if status_callback:
+                    status_callback(attempt, f"⚠️ 课程占用跳过: {res.get('info')}")
                 return res
 
             if not res.get("full"):

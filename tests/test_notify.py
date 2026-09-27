@@ -1,5 +1,7 @@
 from unittest.mock import patch, MagicMock
-from xdty_booking.config import NotifyConfig, EmailConfig, PushPlusConfig, ServerChanConfig, BarkConfig
+import pytest
+import requests
+from xdty_booking.config import NotifyConfig, EmailConfig, PushPlusConfig, ServerChanConfig, BarkConfig, FeishuConfig
 from xdty_booking.notify.notifier import Notifier
 
 def test_notifier_disabled():
@@ -64,7 +66,7 @@ def test_notifier_booking_success_template():
     with patch.object(notifier, "send", return_value={"pushplus": True}) as mock_send:
         slot_info = {
             "stadium_name": "翔安校区健身房",
-            "area_name": "爱秋体育馆",
+            "area_name": "<img src=x onerror=alert(1)>",
             "date": "2026-09-12",
             "time_range": "19:30-21:00",
             "interval_id": "3080",
@@ -76,6 +78,77 @@ def test_notifier_booking_success_template():
         _, kwargs = mock_send.call_args
         assert "19:30-21:00" in kwargs["title"]
         assert "翔安校区健身房" in kwargs["content"]
+        assert "<img src=x onerror=alert(1)>" not in kwargs["html_content"]
+        assert "&lt;img src=x onerror=alert(1)&gt;" in kwargs["html_content"]
+
+@pytest.fixture
+def feishu_notifier():
+    return Notifier(NotifyConfig(
+        enabled=True, channel="feishu",
+        feishu=FeishuConfig(webhook_url="https://open.feishu.cn/open-apis/bot/v2/hook/test"),
+    ))
+
+def test_feishu_booking_success(feishu_notifier):
+    with patch("requests.post") as post:
+        post.return_value.json.return_value = {"code": 0, "msg": "success"}
+        result = feishu_notifier.send_booking_success({
+            "stadium_name": "翔安校区健身房", "date": "2026-09-20",
+            "time_range": "19:30-21:00", "interval_id": "3080",
+        })
+    assert result == {"feishu": True}
+    args, kwargs = post.call_args
+    assert args == (feishu_notifier.cfg.feishu.webhook_url,)
+    assert kwargs["timeout"] == 10
+    payload = kwargs["json"]
+    assert payload["msg_type"] == "text"
+    for text in ("【厦大体育馆预约】", "翔安校区健身房", "2026-09-20", "19:30-21:00"):
+        assert text in payload["content"]["text"]
+    assert "timestamp" not in payload
+    assert "sign" not in payload
+
+@pytest.mark.parametrize("response", [{"code": 19024}, {}, [], {"code": 9499, "StatusCode": 0}])
+def test_feishu_api_failure(feishu_notifier, response):
+    with patch("requests.post") as post:
+        post.return_value.json.return_value = response
+        assert feishu_notifier.send_test() == {"feishu": False}
+
+def test_feishu_signature(feishu_notifier):
+    feishu_notifier.cfg.feishu.secret = "test-secret"
+    with patch("xdty_booking.notify.notifier.time.time", return_value=1700000000.9), patch("requests.post") as post:
+        post.return_value.json.return_value = {"code": 0}
+        assert feishu_notifier.send_test() == {"feishu": True}
+    payload = post.call_args.kwargs["json"]
+    assert payload["timestamp"] == "1700000000"
+    assert payload["sign"] == "mbm4Y4oluIPQ00qlBIhX8vAZ0EKv3nw0LuTb91jPL84="
+
+@pytest.mark.parametrize("error_stage", ["post", "http", "json"])
+def test_feishu_request_failure_redacts_credentials(feishu_notifier, caplog, error_stage):
+    with patch("requests.post") as post:
+        secret_url = feishu_notifier.cfg.feishu.webhook_url
+        if error_stage == "post":
+            post.side_effect = requests.Timeout(secret_url)
+        elif error_stage == "http":
+            post.return_value.raise_for_status.side_effect = requests.HTTPError(secret_url)
+        else:
+            post.return_value.json.side_effect = ValueError(secret_url)
+        assert feishu_notifier.send_test() == {"feishu": False}
+    assert secret_url not in caplog.text
+    assert "飞书推送异常" in caplog.text
+
+@pytest.mark.parametrize("enabled, webhook", [(False, "https://example.com/hook"), (True, "")])
+def test_feishu_disabled_or_unconfigured(feishu_notifier, enabled, webhook):
+    feishu_notifier.cfg.enabled = enabled
+    feishu_notifier.cfg.feishu.webhook_url = webhook
+    with patch("requests.post") as post:
+        assert feishu_notifier.send_test() == {}
+        post.assert_not_called()
+
+def test_all_channels_includes_feishu_after_other_failure(feishu_notifier):
+    feishu_notifier.cfg.channel = "all"
+    feishu_notifier.cfg.pushplus.token = "test-token"
+    with patch.object(feishu_notifier, "_send_pushplus", return_value=False), patch("requests.post") as post:
+        post.return_value.json.return_value = {"code": 0}
+        assert feishu_notifier.send_test() == {"pushplus": False, "feishu": True}
 
 def test_notifier_developer_unified_sender(tmp_path):
     """测试买家仅填写自己的 QQ 邮箱时，系统自动注入开发者统一发信箱进行投递"""

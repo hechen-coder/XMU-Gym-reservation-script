@@ -81,6 +81,7 @@ def test_scheduler_pre_check_session():
     cfg.auth.auto_harvest_enabled = True
     session_mgr = Mock()
     session_mgr.check_alive.return_value = False  # 模拟失效
+    session_mgr.refresh_session_via_password.return_value = None
     client = Mock()
     api = Mock()
     solver = Mock()
@@ -141,3 +142,121 @@ def test_scheduler_silent_run_flow():
         mock_wait.assert_called_once()
         mock_engine.execute_booking.assert_called_once()
         session_mgr.start_heartbeat_daemon.assert_not_called()
+
+
+def test_scheduler_ensure_session_uses_password_relogin_before_harvest():
+    cfg = AppConfig()
+    cfg.auth.auto_harvest_enabled = True
+    cfg.auth.cas_username = "20230001"
+    cfg.auth.cas_password = "pw"
+    session_mgr = Mock()
+    session_mgr.check_alive.return_value = False
+    session_mgr.refresh_session_via_password.return_value = "pw_sess"
+    client = Mock()
+
+    scheduler = BookingScheduler(config=cfg, session_mgr=session_mgr, client=client,
+                                 api=Mock(), solver=Mock(), config_path="config/config.example.yaml")
+    with patch.object(scheduler.harvest_service, "harvest") as mock_harvest:
+        assert scheduler.ensure_valid_session() is True
+        mock_harvest.assert_not_called()
+    client.set_session_token.assert_called_once_with("pw_sess")
+    assert cfg.auth.phpsessid == "pw_sess"
+
+
+def test_scheduler_ensure_session_adopts_credentials_saved_after_start(tmp_path):
+    """网页登录发生在调度器启动之后：预检必须以配置文件里的新凭据为准"""
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(
+        'auth:\n  phpsessid: "fresh_sess"\n  auth_params:\n    token: "fresh_tok"\n',
+        encoding="utf-8",
+    )
+    cfg = AppConfig()  # 启动时内存里没有任何凭据
+    session_mgr = Mock()
+    session_mgr.check_alive.return_value = True
+    session_mgr.refresh_session_via_password.return_value = None  # 未配置账号密码
+    client = Mock()
+    api = Mock()
+    api.get_intervals.return_value.status = 1
+
+    scheduler = BookingScheduler(config=cfg, session_mgr=session_mgr, client=client,
+                                 api=api, solver=Mock(), config_path=str(cfg_file))
+    assert scheduler.ensure_valid_session() is True
+
+    session_mgr.update_token.assert_called_once_with("fresh_sess")
+    session_mgr.set_auth_params.assert_called_once_with({"token": "fresh_tok"})
+    client.set_session_token.assert_called_once_with("fresh_sess")
+    assert cfg.auth.phpsessid == "fresh_sess"
+
+
+def test_scheduler_ensure_session_tries_password_even_if_memory_config_lacks_credentials():
+    cfg = AppConfig()  # 内存里无账号密码，但配置文件里可能已有（由 SessionManager 自行读取）
+    cfg.auth.auto_harvest_enabled = False
+    session_mgr = Mock()
+    session_mgr.check_alive.return_value = False
+    session_mgr.refresh_session_via_password.return_value = "pw_sess"
+    client = Mock()
+
+    scheduler = BookingScheduler(config=cfg, session_mgr=session_mgr, client=client,
+                                 api=Mock(), solver=Mock(), config_path="config/config.example.yaml")
+    assert scheduler.ensure_valid_session() is True
+    client.set_session_token.assert_called_once_with("pw_sess")
+
+
+def test_scheduler_ensure_session_requires_slot_query_not_only_my_subscribe():
+    """仅“我的预约”成功不算正常：场次查询接口返回失效时必须走自愈"""
+    from xdty_booking.core.models import IntervalResponse
+    cfg = AppConfig()
+    cfg.auth.phpsessid = "sess"
+    cfg.auth.auto_harvest_enabled = False
+    session_mgr = Mock()
+    session_mgr.check_alive.return_value = True
+    session_mgr.refresh_session_via_check_login.return_value = None
+    session_mgr.refresh_session_via_password.return_value = None
+    api = Mock()
+    api.get_intervals.return_value = IntervalResponse(
+        status=0, info="登录信息失效,请退出重新登录", venue_id="", date_list=[], time_slot_list=[])
+
+    scheduler = BookingScheduler(config=cfg, session_mgr=session_mgr, client=Mock(),
+                                 api=api, solver=Mock(), config_path="config/config.example.yaml")
+    assert scheduler.ensure_valid_session() is False
+    api.get_intervals.assert_called_once_with(14, 16, 8, "[67]")
+    session_mgr.refresh_session_via_password.assert_called_once()
+
+
+def test_scheduler_pre_check_forces_password_relogin_before_any_probe():
+    """每日预检：只要配置了账号密码，就直接重新登录，不依赖隔夜会话的探测结果"""
+    cfg = AppConfig()
+    cfg.auth.phpsessid = "overnight_sess"
+    session_mgr = Mock()
+    session_mgr.refresh_session_via_password.return_value = "daily_sess"
+    client = Mock()
+    api = Mock()
+
+    scheduler = BookingScheduler(config=cfg, session_mgr=session_mgr, client=client,
+                                 api=api, solver=Mock(), config_path="config/config.example.yaml")
+    assert scheduler.ensure_valid_session() is True
+
+    session_mgr.refresh_session_via_password.assert_called_once()
+    session_mgr.check_alive.assert_not_called()
+    session_mgr.refresh_session_via_check_login.assert_not_called()
+    client.set_session_token.assert_called_once_with("daily_sess")
+    # 重登成功后仅做一次场次探测，预热新会话的场馆上下文
+    api.get_intervals.assert_called_once_with(14, 16, 8, "[67]")
+    assert cfg.auth.phpsessid == "daily_sess"
+
+
+def test_scheduler_pre_check_falls_back_to_existing_session_when_relogin_fails():
+    """账号密码登录失败（CAS 异常等）时，回退检查现有会话，不让当天抢票直接失败"""
+    cfg = AppConfig()
+    cfg.auth.phpsessid = "overnight_sess"
+    cfg.auth.auto_harvest_enabled = False
+    session_mgr = Mock()
+    session_mgr.refresh_session_via_password.return_value = None
+    session_mgr.check_alive.return_value = True
+    api = Mock()
+    api.get_intervals.return_value.status = 1
+
+    scheduler = BookingScheduler(config=cfg, session_mgr=session_mgr, client=Mock(),
+                                 api=api, solver=Mock(), config_path="config/config.example.yaml")
+    assert scheduler.ensure_valid_session() is True
+    session_mgr.refresh_session_via_check_login.assert_not_called()

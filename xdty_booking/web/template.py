@@ -1,5 +1,16 @@
 from datetime import datetime, timedelta
+from html import escape
 from xdty_booking.security.auth import get_auth_status
+
+MAX_PRIORITY_SLOTS = 3
+
+def _slot_at(value, index: int) -> str:
+    """取某天第 index 优先级的时段；旧配置里的单个字符串按一个时段处理"""
+    slots = value if isinstance(value, list) else ([value] if value else [])
+    return slots[index] if index < len(slots) else ""
+
+def _html(value) -> str:
+    return escape(str(value if value is not None else ""), quote=True)
 
 def render_dashboard(data: dict) -> str:
     """生成现代化美观响应式的健身房实时空闲状态与一键预约仪表板页面"""
@@ -35,6 +46,9 @@ def render_dashboard(data: dict) -> str:
     is_sched_running = scheduler_status.get("running", False)
     current_target_time = scheduler_config.get("target_time", "07:00:00")
     current_pref_time = target_config.get("preferred_time", "19:30-21:00")
+    weekly_enabled = scheduler_config.get("weekly_enabled", False)
+    weekly_plan = scheduler_config.get("weekly_plan", {}) or {}
+    date_overrides = scheduler_config.get("date_overrides", {}) or {}
     current_stadium_id = target_config.get("stadium_id", 16)
     current_venue_id = target_config.get("venue_id", 14)
     current_area_id = target_config.get("area_id", 67)
@@ -68,6 +82,7 @@ def render_dashboard(data: dict) -> str:
             ("16:30-18:00", "16:30-18:00 (下午)"),
             ("15:00-16:30", "15:00-16:30 (下午)"),
             ("13:30-15:00", "13:30-15:00 (午间)"),
+            ("12:00-13:30", "12:00-13:30 (午间)"),
             ("10:30-12:00", "10:30-12:00 (上午)")
         ]
 
@@ -75,6 +90,30 @@ def render_dashboard(data: dict) -> str:
         f'<button type="button" class="time-chip {"active" if current_pref_time == t[0] else ""}" data-val="{t[0]}" onclick="setTimeChip(\'{t[0]}\')">{t[1]}</button>'
         for t in preset_times
     ])
+    weekly_rows_html = "".join(
+        f'<label for="weeklyDay{day}_1" style="align-self: center; font-weight: 600;">{name}</label>'
+        + "".join(
+            f'<input id="weeklyDay{day}_{i + 1}" class="form-input" list="weeklyTimeOptions" '
+            f'aria-label="{name}第 {i + 1} 优先级预约时段" '
+            f'placeholder="{"不预约（留空）" if i == 0 else f"备选 {i + 1}（可选）"}" '
+            f'value="{_html(_slot_at(weekly_plan.get(str(day)), i))}">'
+            for i in range(MAX_PRIORITY_SLOTS))
+        for day, name in enumerate(["周一", "周二", "周三", "周四", "周五", "周六", "周日"], 1)
+    )
+    weekly_options_html = "".join(f'<option value="{slot}"></option>' for slot, _ in preset_times)
+    override_row_style = f"display: grid; grid-template-columns: minmax(0, 1fr) repeat({MAX_PRIORITY_SLOTS}, minmax(0, 1fr)) 32px; gap: 8px; margin-bottom: 6px;"
+    override_rows_html = "".join(
+        f'<div class="override-row" style="{override_row_style}">'
+        f'<input type="date" class="form-input override-date" aria-label="特例入场日期" value="{_html(day)}">'
+        + "".join(
+            f'<input class="form-input override-slot" list="weeklyTimeOptions" '
+            f'aria-label="特例第 {i + 1} 优先级时段" '
+            f'placeholder="{"16:30-18:00" if i == 0 else f"备选 {i + 1}（可选）"}" '
+            f'value="{_html(_slot_at(slots, i))}">'
+            for i in range(MAX_PRIORITY_SLOTS))
+        + '<button type="button" class="btn-action" title="删除" onclick="this.parentElement.remove()">🗑️</button></div>'
+        for day, slots in sorted(date_overrides.items())
+    )
     snipe_time_chips_html = "".join([
         f'<button type="button" class="time-chip {"active" if current_pref_time == t[0] else ""}" data-val="{t[0]}" onclick="setSnipeTime(\'{t[0]}\')">{t[1]}</button>'
         for t in preset_times
@@ -1282,8 +1321,8 @@ def render_dashboard(data: dict) -> str:
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px; color: #1e293b;">
                         <div><strong>📍 预约地点:</strong> <span id="infoStadiumName">{stadium_name}</span></div>
                         <div><strong>🕒 目标时段:</strong> <span id="infoPrefTime">{current_pref_time}</span></div>
-                        <div><strong>📅 预约场次:</strong> <span>第二天 (次日场地)</span></div>
-                        <div><strong>⏰ 开抢时刻:</strong> <span>明天早 07:00:00</span></div>
+                        <div><strong>📅 入场日期:</strong> <span id="infoVisitDate">—</span></div>
+                        <div><strong>⏰ 开抢时刻:</strong> <span id="infoRunAt">—</span></div>
                     </div>
                     <div id="infoStatusDesc" style="font-size: 12px; color: #15803d; margin-top: 10px; padding-top: 8px; border-top: 1px dashed #bbf7d0;">
                         {scheduler_status.get('status_text', '将在早 07:00:00 准点为您极速提交预约')}
@@ -1320,8 +1359,27 @@ def render_dashboard(data: dict) -> str:
                     <input type="hidden" id="schedUserRange" value="{current_user_range}">
                 </div>
 
-                <!-- 表单项 2: 目标预约时段 -->
                 <div class="form-group">
+                    <label class="form-label" for="schedWeeklyEnabled">
+                        <span><input type="checkbox" id="schedWeeklyEnabled" {'checked' if weekly_enabled else ''} onchange="toggleWeeklyPlan()"> 按每周计划循环预约</span>
+                    </label>
+                    <div id="weeklyPlanFields" style="display: {'block' if weekly_enabled else 'none'};">
+                        <p style="font-size: 13px; color: #475569; line-height: 1.7;">按<strong>实际入场日期</strong>填写；首选留空表示当天不预约。周六的场次在周五 07:00 开抢。每天最多填 3 个时段，<strong>从左到右优先级由高到低</strong>：首选因满额或课程占用约不到时，自动改约下一个备选；所填时段全部约不到才算失败，绝不改约计划外的时段，并通过已配置的通知渠道提醒。</p>
+                        <div style="display: grid; grid-template-columns: 48px repeat({MAX_PRIORITY_SLOTS}, minmax(0, 1fr)); gap: 8px; align-items: center;">
+                            <span></span><span style="font-size: 12px; color: #64748b;">首选</span><span style="font-size: 12px; color: #64748b;">备选 2</span><span style="font-size: 12px; color: #64748b;">备选 3</span>
+                            {weekly_rows_html}
+                        </div>
+                        <datalist id="weeklyTimeOptions">{weekly_options_html}</datalist>
+                        <p style="font-size: 12px; color: #64748b;">时段格式如 16:30-18:00。修改运行中的计划，请先停止，再保存并重新开启。电脑需保持唤醒，服务重启后需重新开启。</p>
+                        <div style="margin-top: 12px; font-weight: 600;">特例日期（优先于计划表）</div>
+                        <p style="font-size: 12px; color: #64748b; margin: 4px 0 8px;">指定某个<strong>入场日期</strong>改约其他时段，或给计划表没有的日子加一次预约；同样支持 3 个优先级。过期日期保存时自动清理。</p>
+                        <div id="overrideRows">{override_rows_html}</div>
+                        <button type="button" class="btn-action" onclick="addOverrideRow()" style="font-size: 12px;">➕ 添加特例</button>
+                    </div>
+                </div>
+
+                <!-- 单次定时预约时段 -->
+                <div class="form-group" id="singleScheduleFields" style="display: {'none' if weekly_enabled else 'block'};">
                     <div class="form-label">
                         <span>🕒 目标预约时段 (想约的健身时间)</span>
                         <span style="font-size: 12px; font-weight: normal; color: #64748b;">快捷选择或在下方手动修改</span>
@@ -1334,9 +1392,21 @@ def render_dashboard(data: dict) -> str:
                     </div>
                 </div>
 
-                <!-- 隐藏的固定抢票时刻与目标日期 (默认早7点，次日场地，不向用户暴露) -->
-                <input type="hidden" id="schedTargetTimeInput" value="07:00:00">
-                <input type="hidden" id="schedTargetDateOffset" value="1">
+                <!-- 每天开抢触发时刻 (开放自定义，如 07:01:34) -->
+                <div class="form-group">
+                    <div class="form-label">
+                        <span>⏰ 每天开抢触发时刻 (精确到秒)</span>
+                        <span style="font-size: 12px; font-weight: normal; color: #64748b;">系统将在该时刻准点并发抢票</span>
+                    </div>
+                    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                        <input type="text" id="schedTargetTimeInput" class="form-input" style="max-width: 170px; font-family: monospace; font-size: 14px; font-weight: 600;" placeholder="07:00:00" value="{_html(current_target_time)}">
+                        <div style="display: flex; gap: 6px;">
+                            <button type="button" class="btn-action" style="font-size: 12px; padding: 6px 10px;" onclick="setTargetTime('07:00:00')">07:00:00 (常规)</button>
+                        </div>
+                    </div>
+                    <p style="font-size: 12px; color: #64748b; margin-top: 5px; margin-bottom: 0;">支持格式为 <code>HH:MM:SS</code>（如 <code>07:00:00</code>），可根据实际放票规律自由设置精确起跑时间。</p>
+                </div>
+                <input type="hidden" id="schedTargetDateOffset" value="{_html(target_config.get('target_date_offset', 1))}">
 
                 <!-- 表单项 3: 辅助选项 -->
                 <div style="padding: 12px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0; margin-top: 6px;">
@@ -2178,6 +2248,7 @@ def render_dashboard(data: dict) -> str:
                 ["16:30-18:00", "16:30-18:00 (下午)"],
                 ["15:00-16:30", "15:00-16:30 (下午)"],
                 ["13:30-15:00", "13:30-15:00 (午间)"],
+                ["12:00-13:30", "12:00-13:30 (午间)"],
                 ["10:30-12:00", "10:30-12:00 (上午)"]
             ];
             const simingTimes = [
@@ -2229,6 +2300,11 @@ def render_dashboard(data: dict) -> str:
             }});
         }}
 
+        function setTargetTime(val) {{
+            const el = document.getElementById("schedTargetTimeInput");
+            if (el) el.value = val;
+        }}
+
         async function fetchSchedulerStatus() {{
             try {{
                 const res = await fetch("/api/scheduler/status");
@@ -2258,17 +2334,43 @@ def render_dashboard(data: dict) -> str:
                 if (infoStadium && data.stadium_name) infoStadium.innerText = data.stadium_name;
                 if (infoPref && data.preferred_time) infoPref.innerText = data.preferred_time;
                 if (infoDesc && data.status_text) infoDesc.innerText = data.status_text;
+                const visitEl = document.getElementById("infoVisitDate");
+                if (visitEl) visitEl.innerText = data.target_date || "—";
+                const runEl = document.getElementById("infoRunAt");
+                if (runEl) runEl.innerText = data.next_run_dt || "—";
+                if (btnStart) btnStart.disabled = isRunning;
 
                 if (isRunning) {{
                     if (infoCard) infoCard.style.display = "block";
                     if (btnStop) btnStop.style.display = "inline-block";
-                    if (btnStart) btnStart.innerText = "🔄 更新预约设置";
+                    if (btnStart) btnStart.innerText = "请先停止再修改计划";
                 }} else {{
                     if (infoCard) infoCard.style.display = "none";
                     if (btnStop) btnStop.style.display = "none";
                     if (btnStart) btnStart.innerText = "🚀 开启定时预约";
                 }}
             }} catch(e) {{}}
+        }}
+
+        function toggleWeeklyPlan() {{
+            const enabled = document.getElementById("schedWeeklyEnabled").checked;
+            document.getElementById("weeklyPlanFields").style.display = enabled ? "block" : "none";
+            document.getElementById("singleScheduleFields").style.display = enabled ? "none" : "block";
+            const fallback = document.getElementById("schedFallbackNearest");
+            fallback.disabled = enabled;
+            if (enabled) fallback.checked = false;
+        }}
+
+        function addOverrideRow() {{
+            const row = document.createElement("div");
+            row.className = "override-row";
+            row.style.cssText = "{override_row_style}";
+            row.innerHTML = '<input type="date" class="form-input override-date" aria-label="特例入场日期">'
+                + '<input class="form-input override-slot" list="weeklyTimeOptions" aria-label="特例首选时段" placeholder="16:30-18:00">'
+                + '<input class="form-input override-slot" list="weeklyTimeOptions" aria-label="特例第 2 优先级时段" placeholder="备选 2（可选）">'
+                + '<input class="form-input override-slot" list="weeklyTimeOptions" aria-label="特例第 3 优先级时段" placeholder="备选 3（可选）">'
+                + '<button type="button" class="btn-action" title="删除" onclick="this.parentElement.remove()">🗑️</button>';
+            document.getElementById("overrideRows").appendChild(row);
         }}
 
         function getSchedulerPayload() {{
@@ -2282,6 +2384,20 @@ def render_dashboard(data: dict) -> str:
             const targetTime = (document.getElementById("schedTargetTimeInput").value || "07:00:00").trim();
             const dateOffset = parseInt(document.getElementById("schedTargetDateOffset").value || "1");
             const fallbackNearest = document.getElementById("schedFallbackNearest").checked;
+            const weeklyEnabled = document.getElementById("schedWeeklyEnabled").checked;
+            // 每天最多三个时段，按输入框顺序即优先级从高到低；留空的跳过
+            const readSlots = (inputs) => [...inputs].map(i => i.value.trim()).filter(Boolean);
+            const weeklyPlan = {{}};
+            for (let day = 1; day <= 7; day++) {{
+                const slots = readSlots(document.querySelectorAll(`[id^="weeklyDay${{day}}_"]`));
+                if (slots.length) weeklyPlan[String(day)] = slots;
+            }}
+            const dateOverrides = {{}};
+            document.querySelectorAll("#overrideRows .override-row").forEach(row => {{
+                const d = row.querySelector(".override-date").value.trim();
+                const slots = readSlots(row.querySelectorAll(".override-slot"));
+                if (d && slots.length) dateOverrides[d] = slots;
+            }});
 
             return {{
                 target: {{
@@ -2296,7 +2412,10 @@ def render_dashboard(data: dict) -> str:
                 }},
                 scheduler: {{
                     target_time: targetTime,
-                    fallback_nearest: fallbackNearest
+                    fallback_nearest: fallbackNearest,
+                    weekly_enabled: weeklyEnabled,
+                    weekly_plan: weeklyPlan,
+                    date_overrides: dateOverrides
                 }}
             }};
         }}
@@ -3225,6 +3344,22 @@ def render_qr_login_page(is_already_logged_in: bool = False, phpsessid_masked: s
                 🔄 刷新二维码
             </button>
 
+            <!-- 账号密码登录区 -->
+            <form id="pwForm" onsubmit="return pwLogin(event)" style="margin: 22px auto 0; max-width: 320px; text-align: left;">
+                <div style="text-align: center; font-size: 12px; color: #94a3b8; margin-bottom: 10px;">—— 或使用统一身份认证账号密码登录 ——</div>
+                <input name="username" id="pwUser" placeholder="学号 / 工号" autocomplete="username" required
+                       style="width: 100%; box-sizing: border-box; padding: 9px 12px; margin-bottom: 8px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px;">
+                <input name="password" id="pwPass" type="password" placeholder="密码" autocomplete="current-password" required
+                       style="width: 100%; box-sizing: border-box; padding: 9px 12px; margin-bottom: 8px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px;">
+                <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #475569; margin-bottom: 10px;">
+                    <input type="checkbox" id="pwRemember" checked> 保存账号密码，登录失效时自动重新登录
+                </label>
+                <button type="submit" class="refresh-btn" id="pwBtn" style="width: 100%; margin-top: 0; background: var(--primary); color: #fff; border-color: var(--primary);">
+                    🔑 账号密码登录
+                </button>
+                <div id="pwMsg" style="font-size: 12px; color: #b91c1c; margin-top: 8px; min-height: 16px; text-align: center;"></div>
+            </form>
+
             <!-- 成功跳转区 -->
             <div class="success-card" id="successCard">
                 <div style="font-size: 18px; font-weight: 700; color: #166534; margin-bottom: 6px;">
@@ -3266,7 +3401,7 @@ def render_qr_login_page(is_already_logged_in: bool = False, phpsessid_masked: s
             updateStatus("scanning", "正在向统一认证中心申请 UUID...");
 
             try {{
-                const res = await fetch("/api/qr");
+                const res = await fetch("/api/qr", {{method: "POST", headers: {{"Content-Type": "application/json"}}}});
                 const data = await res.json();
                 if (data.success) {{
                     document.getElementById("qrImg").src = data.qr_image;
@@ -3296,7 +3431,7 @@ def render_qr_login_page(is_already_logged_in: bool = False, phpsessid_masked: s
                     return;
                 }}
                 try {{
-                    const res = await fetch("/api/qr_status");
+                    const res = await fetch("/api/qr_status", {{method: "POST", headers: {{"Content-Type": "application/json"}}}});
                     const data = await res.json();
 
                     if (data.code === "0") {{
@@ -3343,6 +3478,41 @@ def render_qr_login_page(is_already_logged_in: bool = False, phpsessid_masked: s
 
         function refreshQr() {{
             initQr();
+        }}
+
+        async function pwLogin(ev) {{
+            ev.preventDefault();
+            const btn = document.getElementById("pwBtn");
+            const msg = document.getElementById("pwMsg");
+            btn.disabled = true;
+            msg.style.color = "#475569";
+            msg.innerText = "正在登录统一身份认证，识别验证码中...";
+            try {{
+                const res = await fetch("/api/pw_login", {{
+                    method: "POST",
+                    headers: {{"Content-Type": "application/json"}},
+                    body: JSON.stringify({{
+                        username: document.getElementById("pwUser").value.trim(),
+                        password: document.getElementById("pwPass").value,
+                        remember: document.getElementById("pwRemember").checked
+                    }})
+                }});
+                const data = await res.json();
+                if (data.success) {{
+                    msg.innerText = "";
+                    document.getElementById("pwForm").style.display = "none";
+                    handleSuccess(data.data);
+                }} else {{
+                    msg.style.color = "#b91c1c";
+                    msg.innerText = data.error || "登录失败";
+                }}
+            }} catch (e) {{
+                msg.style.color = "#b91c1c";
+                msg.innerText = "请求异常: " + e.message;
+            }} finally {{
+                btn.disabled = false;
+            }}
+            return false;
         }}
 
         window.onload = initQr;

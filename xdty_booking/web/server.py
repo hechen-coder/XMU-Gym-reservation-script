@@ -11,6 +11,7 @@ from xdty_booking.config import (
     load_config,
     save_phpsessid,
     save_auth_params,
+    save_cas_credentials,
     save_target_and_scheduler_config,
     save_notify_config
 )
@@ -20,7 +21,7 @@ from xdty_booking.auth.session_manager import SessionManager
 from xdty_booking.auth.harvester_service import HarvestService
 from xdty_booking.solver.captcha_solver import CaptchaSolver
 from xdty_booking.core.booking_engine import BookingEngine
-from xdty_booking.core.scheduler import BookingScheduler
+from xdty_booking.core.scheduler import BookingScheduler, next_scheduled_booking, planned_slots, slots_text
 from xdty_booking.notify.notifier import Notifier
 from xdty_booking.web.template import render_dashboard, render_qr_login_page
 from xdty_booking.utils.logger import setup_logger
@@ -97,12 +98,20 @@ class SchedulerManager:
         self._preferred_time = ""
         self._last_result: Optional[Dict[str, Any]] = None
 
+    def is_running(self) -> bool:
+        with self._lock:
+            return bool(self._is_running and self._thread and self._thread.is_alive())
+
     def get_status(self) -> Dict[str, Any]:
         with self._lock:
             if self._is_running and self._thread and not self._thread.is_alive():
                 self._is_running = False
                 if not self._last_result and self._status_text.startswith("正在启动"):
                     self._status_text = "定时任务已结束"
+            upcoming = getattr(self._scheduler, "next_booking", None)
+            if isinstance(upcoming, tuple):
+                self._next_run_dt = upcoming[0].strftime("%Y-%m-%d %H:%M:%S")
+                self._preferred_time = slots_text(upcoming[2])
             return {
                 "running": self._is_running,
                 "status_text": self._status_text,
@@ -110,13 +119,14 @@ class SchedulerManager:
                 "next_run_dt": self._next_run_dt,
                 "stadium_name": self._stadium_name,
                 "preferred_time": self._preferred_time,
-                "last_result": self._last_result
+                "target_date": upcoming[1] if isinstance(upcoming, tuple) else "",
+                "last_result": (getattr(self._scheduler, "last_result", None) or self._last_result)
             }
 
     def start(self, config_path: str = _GLOBAL_CONFIG_PATH) -> Dict[str, Any]:
         with self._lock:
-            if self._is_running and self._thread and self._thread.is_alive():
-                return {"success": False, "info": "定时任务已在运行中，请勿重复启动"}
+            if self._thread and self._thread.is_alive():
+                return {"success": False, "info": "定时任务仍在运行或停止中，请停止并等待结束后再修改计划"}
 
             c_path = _ensure_config_path(config_path)
             cfg = load_config(c_path)
@@ -149,6 +159,9 @@ class SchedulerManager:
             self._preferred_time = cfg.target.preferred_time
             self._status_text = f"定时守护中：将在早 {self._target_time} 执行准点抢票"
             self._last_result = None
+            scheduler.next_booking = next_scheduled_booking(cfg, datetime.now())
+            self._next_run_dt = scheduler.next_booking[0].strftime("%Y-%m-%d %H:%M:%S")
+            self._preferred_time = slots_text(scheduler.next_booking[2])
 
             def _status_cb(msg: str):
                 with self._lock:
@@ -176,13 +189,6 @@ class SchedulerManager:
             self._thread = t
             self._is_running = True
             t.start()
-
-            now = datetime.now()
-            target_hour, target_minute, target_second = map(int, self._target_time.split(":"))
-            target_dt = now.replace(hour=target_hour, minute=target_minute, second=target_second, microsecond=0)
-            if target_dt <= now:
-                target_dt += timedelta(days=1)
-            self._next_run_dt = target_dt.strftime("%Y-%m-%d %H:%M:%S")
 
             return {
                 "success": True,
@@ -465,7 +471,10 @@ def query_gym_status(config_path: Optional[str] = None, auto_heal: bool = True) 
         "scheduler_config": {
             "target_time": cfg.scheduler.target_time,
             "fallback_nearest": cfg.scheduler.fallback_nearest,
-            "pre_check_minutes": cfg.scheduler.pre_check_minutes
+            "pre_check_minutes": cfg.scheduler.pre_check_minutes,
+            "weekly_enabled": cfg.scheduler.weekly_enabled,
+            "weekly_plan": cfg.scheduler.weekly_plan,
+            "date_overrides": cfg.scheduler.date_overrides
         },
         "notify_config": {
             "enabled": cfg.notify.enabled,
@@ -477,11 +486,12 @@ def query_gym_status(config_path: Optional[str] = None, auto_heal: bool = True) 
     if intervals and hasattr(intervals, "time_slot_list"):
         data["date_list"] = [{"date": d.date, "week": d.week} for d in getattr(intervals, "date_list", [])]
         for g in intervals.time_slot_list:
+            preferred_times = planned_slots(cfg, g.date)
             group_data = {
                 "date": g.date,
                 "week_name": g.week_name,
                 "time_range": g.time_range,
-                "is_preferred": (g.time_range == cfg.target.preferred_time),
+                "is_preferred": (g.time_range in preferred_times),
                 "slots": []
             }
             for s in g.slots:
@@ -635,6 +645,16 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             })
             return
 
+        if parsed.path == "/api/qr" or parsed.path.startswith("/api/qr?"):
+            self._handle_qr_init()
+            return
+        if parsed.path in ("/api/qr_status", "/api/qr/status") or parsed.path.startswith("/api/qr_status?"):
+            self._handle_qr_status()
+            return
+        if parsed.path.startswith("/api/pw_login"):
+            self._handle_pw_login(body_json)
+            return
+
         if parsed.path.startswith("/api/book"):
             self._handle_book(params)
         elif parsed.path.startswith("/api/relogin"):
@@ -662,11 +682,42 @@ class GymStatusHandler(BaseHTTPRequestHandler):
         else:
             self._send_json(404, {"error": "Not Found"})
 
+    def _handle_pw_login(self, body: dict):
+        """统一身份认证账号密码登录；remember=true 时保存账号密码供失效后自动重新登录"""
+        username = body.get("username")
+        password = body.get("password")
+        if not isinstance(username, str) or not isinstance(password, str) or len(username) > 128 or len(password) > 256:
+            self._send_json(400, {"success": False, "error": "账号或密码格式无效"})
+            return
+        username = username.strip()
+        if not username or not password:
+            self._send_json(400, {"success": False, "error": "请填写账号和密码"})
+            return
+        try:
+            res = CasQrLoginClient().password_login(username, password)
+            c_path = _ensure_config_path(_GLOBAL_CONFIG_PATH)
+            if res.get("phpsessid"):
+                save_phpsessid(c_path, res["phpsessid"])
+            if res.get("auth_params"):
+                save_auth_params(c_path, res["auth_params"])
+            if body.get("remember"):
+                save_cas_credentials(c_path, username, password)
+            logger.info(f"💾 账号密码登录凭据已持久化回写至配置文件: {c_path}")
+            self._send_json(200, res)
+        except Exception as e:
+            logger.error(f"账号密码登录失败: {e}")
+            self._send_json(200, {"success": False, "error": str(e)})
+
     def _handle_scheduler_config_save(self, body_json: dict, params: dict):
         try:
+            if _scheduler_manager._thread and _scheduler_manager._thread.is_alive():
+                self._send_json(409, {"success": False, "info": "请先停止正在运行的定时任务，再修改计划并重新开启"})
+                return
             c_path = _ensure_config_path(_GLOBAL_CONFIG_PATH)
             target = body_json.get("target") or {}
             scheduler = body_json.get("scheduler") or {}
+            if not isinstance(target, dict) or not isinstance(scheduler, dict):
+                raise ValueError("目标与定时配置必须是映射")
 
             # 也支持扁平参数传入
             target_keys = ["stadium_id", "venue_id", "stadium_name", "area_name", "area_id", "preferred_time", "target_date_offset", "user_range"]
@@ -693,14 +744,23 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                             pass
                     scheduler[k] = val
 
+            if isinstance(scheduler.get("date_overrides"), dict):
+                today = datetime.now().date().isoformat()  # 已过期的特例日期自动清理
+                scheduler["date_overrides"] = {d: t for d, t in scheduler["date_overrides"].items() if str(d) >= today}
+
             save_target_and_scheduler_config(c_path, target_updates=target, scheduler_updates=scheduler)
             self._send_json(200, {"success": True, "info": "定时预约配置已保存成功！"})
+        except ValueError as e:
+            self._send_json(400, {"success": False, "info": str(e)})
         except Exception as e:
             logger.error(f"保存定时配置异常: {e}", exc_info=True)
             self._send_json(500, {"success": False, "info": str(e)})
 
     def _handle_scheduler_start(self, body_json: dict, params: dict):
         try:
+            if _scheduler_manager._thread and _scheduler_manager._thread.is_alive():
+                self._send_json(409, {"success": False, "info": "定时任务仍在运行或停止中，请等待结束后再开启"})
+                return
             c_path = _ensure_config_path(_GLOBAL_CONFIG_PATH)
             target = body_json.get("target")
             scheduler = body_json.get("scheduler")
@@ -709,6 +769,8 @@ class GymStatusHandler(BaseHTTPRequestHandler):
 
             res = _scheduler_manager.start(c_path)
             self._send_json(200, res)
+        except ValueError as e:
+            self._send_json(400, {"success": False, "info": str(e)})
         except Exception as e:
             logger.error(f"启动定时任务异常: {e}", exc_info=True)
             self._send_json(500, {"success": False, "info": str(e)})
@@ -740,9 +802,15 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                 "scheduler": {
                     "target_time": cfg.scheduler.target_time,
                     "fallback_nearest": cfg.scheduler.fallback_nearest,
-                    "pre_check_minutes": cfg.scheduler.pre_check_minutes
+                    "pre_check_minutes": cfg.scheduler.pre_check_minutes,
+                    "weekly_enabled": cfg.scheduler.weekly_enabled,
+                    "weekly_plan": cfg.scheduler.weekly_plan,
+                    "date_overrides": cfg.scheduler.date_overrides
                 }
             })
+        except Exception as e:
+            logger.error(f"获取定时配置异常: {e}", exc_info=True)
+            self._send_json(500, {"success": False, "info": str(e)})
         except Exception as e:
             logger.error(f"获取定时配置异常: {e}", exc_info=True)
             self._send_json(500, {"success": False, "info": str(e)})
@@ -1303,6 +1371,31 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                 }
                 self._send_html(200, render_dashboard(fallback_data))
 
+def start_login_monitor(config_path: str) -> Optional[SessionManager]:
+    """
+    后台登录状态监控：按 auth.heartbeat_interval_seconds 周期探活，失效时自动自愈并通知。
+    周期 <= 0 时关闭。凭据每轮从配置文件重新读取，因此网页登录 / 调度器重登后无需重启。
+    """
+    try:
+        c_path = _ensure_config_path(config_path)
+        cfg = load_config(c_path)
+    except Exception as e:
+        logger.warning(f"登录状态监控未启动（读取配置失败）: {e}")
+        return None
+    interval = int(cfg.auth.heartbeat_interval_seconds or 0)
+    if interval <= 0:
+        logger.info("登录状态监控已关闭 (auth.heartbeat_interval_seconds <= 0)")
+        return None
+    client = ApiClient(base_url=cfg.base_url)
+    if cfg.auth.phpsessid:
+        client.set_session_token(cfg.auth.phpsessid)
+    api = XdtyApi(client, uid=cfg.auth.uid or None)
+    mgr = SessionManager(api, phpsessid=cfg.auth.phpsessid, auth_params=cfg.auth.auth_params, config_path=c_path)
+    mgr.start_heartbeat_daemon(interval_seconds=interval, notifier=Notifier(cfg.notify))
+    logger.info(f"🩺 登录状态监控已启动，每 {interval} 秒探活一次，失效将自动重登并通知")
+    return mgr
+
+
 def run_server(port: int = 8080, config_path: str = "config/config.yaml"):
     global _GLOBAL_CONFIG_PATH
     _GLOBAL_CONFIG_PATH = config_path
@@ -1320,6 +1413,7 @@ def run_server(port: int = 8080, config_path: str = "config/config.yaml"):
     logger.info(f"👉 实时 JSON API: http://localhost:{port}/api/status")
     logger.info(f"👉 凭证自愈 API: http://localhost:{port}/api/harvest")
     print(f"\n服务启动成功！浏览器访问: http://localhost:{port} (扫码登录: http://localhost:{port}/login)\n")
+    start_login_monitor(config_path)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -143,22 +143,36 @@ def ensure_valid_session(cfg, session_mgr, client, config_path: str, timeout: fl
     else:
         logger.info("未配置 auth_params 或缺少 token，跳过第 1 阶纯 HTTP 续登。")
 
-    # 第 2 阶：PC 微信静默唤醒与本地嗅探兜底
+    # 第 2 阶：尝试统一身份认证 CAS 账号密码自动重新登录
+    if cfg.auth.cas_username and cfg.auth.cas_password:
+        logger.info("尝试第 2 阶自愈：统一身份认证 (CAS) 账号密码登录...")
+        new_phpsessid = session_mgr.refresh_session_via_password()
+        if new_phpsessid:
+            cfg.auth.phpsessid = new_phpsessid
+            client.set_session_token(new_phpsessid)
+            logger.info("✅ 第 2 阶 CAS 密码重新登录成功！登录态已完全恢复。")
+            return True
+        else:
+            logger.warning("第 2 阶 CAS 密码重新登录未成功。")
+    else:
+        logger.debug("未配置 cas_username 或 cas_password，跳过第 2 阶 CAS 密码自动登录。")
+
+    # 第 3 阶：PC 微信静默唤醒与本地嗅探兜底
     if not cfg.auth.auto_harvest_enabled:
-        logger.warning(f"auto_harvest_enabled 未开启，无法执行第 2 阶微信自动化兜底")
+        logger.warning("auto_harvest_enabled 未开启，无法执行第 3 阶微信自动化兜底")
         return False
 
-    logger.info("启动第 2 阶自愈：PC 微信静默自动化嗅探兜底...")
+    logger.info("启动第 3 阶自愈：PC 微信静默自动化嗅探兜底...")
     service = HarvestService(cfg, config_path=config_path)
     new_token = service.harvest(timeout=timeout)
     if new_token:
         session_mgr.update_token(new_token)
         client.set_session_token(new_token)
         cfg.auth.phpsessid = new_token
-        logger.info("✅ 第 2 阶微信自动化自愈完成！")
+        logger.info("✅ 第 3 阶微信自动化自愈完成！")
         return True
     else:
-        logger.error("第 2 阶微信自动化自愈未成功获取到新凭证，请确认微信已登录且小程序可用")
+        logger.error("第 3 阶微信自动化自愈未成功获取到新凭证，请确认微信已登录且小程序可用")
         return False
 
 def main():
@@ -243,14 +257,17 @@ def main():
                 logger.error("❌ Session 自愈未完成，请检查微信或网络状态。")
 
     elif args.action == "relogin":
-        logger.info("正在执行 方案 A：纯 HTTP 调用 checkLogin 强制换取新 Session...")
+        logger.info("正在执行 自动续登：优先 HTTP 调用 checkLogin 强制换取新 Session...")
         new_token = session_mgr.refresh_session_via_check_login()
+        if not new_token and cfg.auth.cas_username and cfg.auth.cas_password:
+            logger.info("checkLogin 未成功，正在尝试使用统一身份认证 (CAS) 账号密码重新登录...")
+            new_token = session_mgr.refresh_session_via_password()
         if new_token:
             client.set_session_token(new_token)
             cfg.auth.phpsessid = new_token
-            logger.info(f"🎉 纯 HTTP 自动续登成功！最新 PHPSESSID: {new_token}")
+            logger.info(f"🎉 自动续登成功！最新 PHPSESSID: {new_token}")
         else:
-            logger.error("❌ checkLogin 续登失败，请检查 auth_params 配置或使用 harvest 重新截获。")
+            logger.error("❌ 续登失败，请检查 auth_params 或 CAS 账号密码配置，或使用 harvest 重新截获。")
 
     elif args.action == "harvest":
         logger.info("手动触发 方案 A：微信小程序本地代理自动嗅探与凭证截获...")
