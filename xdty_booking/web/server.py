@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import threading
+import time
 import re
 import math
 from datetime import datetime, timedelta
@@ -65,8 +66,14 @@ def _ensure_config_path(config_path: Optional[str] = None) -> str:
             return example_path
     return path
 
+_SESSION_ENSURE_LOCK = threading.Lock()
+_LAST_SESSION_VALID_TIME = 0.0
+_LAST_SESSION_VALID_TOKEN = ""
+
 def ensure_session(cfg, session_mgr, client, config_path: str, timeout: float = 30.0) -> bool:
-    """Session 有效性预检与双阶自动自愈核心工具"""
+    """Session 有效性预检与双阶自动自愈核心工具，支持并发互斥与短时健康缓存，防止频发重复续登"""
+    global _LAST_SESSION_VALID_TIME, _LAST_SESSION_VALID_TOKEN
+
     has_token = bool(getattr(cfg.auth, "auth_params", None) and cfg.auth.auth_params.get("token"))
     has_php = bool(cfg.auth.phpsessid)
 
@@ -74,17 +81,56 @@ def ensure_session(cfg, session_mgr, client, config_path: str, timeout: float = 
     if not has_php and not has_token:
         return False
 
-    if has_php and session_mgr.check_alive():
+    now = time.time()
+    # 快速短路缓存：若当前 Token 与上次成功校验/自愈的 Token 一致，且距上次检验不足 15 秒，直接判定为有效
+    if has_php and cfg.auth.phpsessid == _LAST_SESSION_VALID_TOKEN and (now - _LAST_SESSION_VALID_TIME < 15.0):
+        if client:
+            client.set_session_token(cfg.auth.phpsessid)
         return True
 
-    logger.warning("检测到 Session 无效或已过期，启动双阶自愈策略...")
-    new_token = session_mgr.renew_or_fallback()
-    if new_token:
-        client.set_session_token(new_token)
-        cfg.auth.phpsessid = new_token
-        logger.info("Session 自愈成功！")
-        return True
-    return False
+    with _SESSION_ENSURE_LOCK:
+        now = time.time()
+        # 进入互斥锁后再次检查（可能前一个获取锁的线程刚自愈完成并更新了配置文件）
+        c_path = _ensure_config_path(config_path)
+        try:
+            latest_cfg = load_config(c_path)
+            if latest_cfg.auth.phpsessid and latest_cfg.auth.phpsessid != cfg.auth.phpsessid:
+                cfg.auth.phpsessid = latest_cfg.auth.phpsessid
+                if client:
+                    client.set_session_token(latest_cfg.auth.phpsessid)
+                session_mgr.update_token(latest_cfg.auth.phpsessid)
+            if getattr(latest_cfg.auth, "auth_params", None):
+                cfg.auth.auth_params = latest_cfg.auth.auth_params
+                session_mgr.set_auth_params(latest_cfg.auth.auth_params)
+        except Exception:
+            pass
+
+        has_php = bool(cfg.auth.phpsessid)
+        has_token = bool(getattr(cfg.auth, "auth_params", None) and cfg.auth.auth_params.get("token"))
+        if not has_php and not has_token:
+            return False
+
+        if has_php and cfg.auth.phpsessid == _LAST_SESSION_VALID_TOKEN and (time.time() - _LAST_SESSION_VALID_TIME < 15.0):
+            if client:
+                client.set_session_token(cfg.auth.phpsessid)
+            return True
+
+        if has_php and session_mgr.check_alive():
+            _LAST_SESSION_VALID_TIME = time.time()
+            _LAST_SESSION_VALID_TOKEN = cfg.auth.phpsessid
+            return True
+
+        logger.warning("检测到 Session 无效或已过期，启动双阶自愈策略...")
+        new_token = session_mgr.renew_or_fallback()
+        if new_token:
+            if client:
+                client.set_session_token(new_token)
+            cfg.auth.phpsessid = new_token
+            _LAST_SESSION_VALID_TIME = time.time()
+            _LAST_SESSION_VALID_TOKEN = new_token
+            logger.info("Session 自愈成功！")
+            return True
+        return False
 
 class SchedulerManager:
     """Web 服务后台定时预约任务管理器"""
@@ -618,6 +664,8 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             c_path = _ensure_config_path(_GLOBAL_CONFIG_PATH)
             cfg = load_config(c_path)
             client = ApiClient(base_url=cfg.base_url)
+            if cfg.auth.phpsessid:
+                client.set_session_token(cfg.auth.phpsessid)
             api = XdtyApi(client, uid=cfg.auth.uid if cfg.auth.uid else None)
             session_mgr = SessionManager(
                 api,
@@ -1086,6 +1134,8 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             c_path = _ensure_config_path(_GLOBAL_CONFIG_PATH)
             cfg = load_config(c_path)
             client = ApiClient(base_url=cfg.base_url)
+            if cfg.auth.phpsessid:
+                client.set_session_token(cfg.auth.phpsessid)
             api = XdtyApi(client, uid=cfg.auth.uid if cfg.auth.uid else None)
             session_mgr = SessionManager(
                 api,

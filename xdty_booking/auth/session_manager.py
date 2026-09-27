@@ -30,6 +30,8 @@ class SessionManager:
         self.on_expired = on_expired
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        if self.phpsessid and self.api and getattr(self.api, "client", None):
+            self.api.client.set_session_token(self.phpsessid)
 
     def set_auth_params(self, auth_params: Dict[str, Any]):
         """设置或更新 checkLogin 认证参数上下文"""
@@ -146,12 +148,16 @@ class SessionManager:
             return False
 
         try:
+            if self.phpsessid and self.api and getattr(self.api, "client", None):
+                self.api.client.set_session_token(self.phpsessid)
             resp = self.api.my_subscribe(page=1)
             # 接口在有效时返回 {"status": 1, ...}
             # 失效或未登录时通常返回 {"status": -1, "info": "..."} 或 status: 0
             if isinstance(resp, dict) and resp.get("status") == 1:
                 return True
-            logger.warning("Session 存活检测未通过")
+            status_val = resp.get("status") if isinstance(resp, dict) else "non-dict"
+            info_val = resp.get("info") if isinstance(resp, dict) else resp
+            logger.warning(f"Session 存活检测未通过 (服务端响应: status={status_val}, info={info_val})")
             return False
         except Exception as e:
             logger.error("Session 存活检测异常: %s", type(e).__name__)
