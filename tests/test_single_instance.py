@@ -38,8 +38,9 @@ def test_check_single_instance_first_run():
         assert result is True
         assert launcher_mod._SINGLE_INSTANCE_MUTEX == 12345
 
-    # 清理
-    release_single_instance()
+    # 清理仍需在模拟 Windows 环境内执行。
+    with patch.object(sys, "platform", "win32"), patch.dict("sys.modules", {"ctypes": mock_ctypes}):
+        release_single_instance()
     assert launcher_mod._SINGLE_INSTANCE_MUTEX is None
 
 
@@ -80,6 +81,6 @@ def test_check_single_instance_non_windows():
 
 def test_run_server_port_conflict():
     """测试 Web 服务端口被占用时优雅处理 OSError 异常而不崩溃"""
-    with patch("xdty_booking.web.server.HTTPServer", side_effect=OSError(10048, "Address already in use")):
+    with patch("xdty_booking.web.server.ThreadingHTTPServer", side_effect=OSError(10048, "Address already in use")):
         # 不应抛出异常，而是优雅返回
         run_server(port=8080)

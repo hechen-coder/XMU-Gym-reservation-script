@@ -1,11 +1,77 @@
 import os
 import re
+import json
+import tempfile
+import threading
 import yaml
 import logging
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import ClassVar, Optional, List, Dict, Any
+from typing import ClassVar, Optional, List, Dict, Any, Callable
 
 logger = logging.getLogger(__name__)
+
+_CONFIG_LOCK = threading.RLock()
+
+@contextmanager
+def _locked_config(path: str):
+    """跨进程与跨线程保护配置文件读写。"""
+    with _CONFIG_LOCK:
+        fd = os.open(path + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
+        locked = False
+        try:
+            if os.name == "nt":
+                import msvcrt
+                os.write(fd, b"0") if os.fstat(fd).st_size == 0 else None
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            locked = True
+            yield
+        finally:
+            if locked:
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+def _write_private(path: str, content: str):
+    directory = os.path.dirname(os.path.abspath(path))
+    fd, tmp_path = tempfile.mkstemp(prefix=".config-", dir=directory, text=True)
+    try:
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+def _update_config(path: str, edit: Callable[[str], str]) -> bool:
+    with _locked_config(path):
+        if not os.path.exists(path):
+            return False
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        _write_private(path, edit(content))
+        return True
+
+def ensure_config_file(path: str, example_path: str) -> str:
+    with _locked_config(path):
+        if not os.path.exists(path):
+            with open(example_path, "r", encoding="utf-8") as f:
+                _write_private(path, f.read())
+    return path
 
 def safe_load_yaml_file(config_path: str) -> Dict[str, Any]:
     """
@@ -29,7 +95,7 @@ def safe_load_yaml_file(config_path: str) -> Dict[str, Any]:
     # 1. 尝试原生安全解析
     try:
         data = yaml.safe_load(content)
-        if isinstance(data, dict):
+        if isinstance(data, (dict, list)):
             return data
         if data is None:
             return {}
@@ -281,11 +347,17 @@ def load_config(config_path: str = "config/config.yaml") -> AppConfig:
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Config file not found: {config_path}")
     data = safe_load_yaml_file(config_path)
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        raise ValueError("配置文件顶层必须是映射")
     
-    auth_data = data.get("auth", {})
-    target_data = data.get("target", {})
-    scheduler_data = data.get("scheduler", {})
-    notify_data = data.get("notify", {})
+    auth_data = data.get("auth") or {}
+    target_data = data.get("target") or {}
+    scheduler_data = data.get("scheduler") or {}
+    notify_data = data.get("notify") or {}
+    if any(not isinstance(section, dict) for section in (auth_data, target_data, scheduler_data, notify_data)):
+        raise ValueError("配置分区必须是映射")
 
     # 递归构建 NotifyConfig (支持 pushplus_token 极简单行写法与统一发信箱收件人极简写法)
     pushplus_raw = notify_data.get("pushplus")
@@ -371,8 +443,12 @@ def load_config(config_path: str = "config/config.yaml") -> AppConfig:
         if "venue_id" not in target_data:
             target_cfg.venue_id = 6
 
+    base_url = data.get("base_url") or AppConfig.base_url
+    if not isinstance(base_url, str):
+        raise ValueError("base_url 必须是字符串")
+
     return AppConfig(
-        base_url=data.get("base_url", "https://xdty.xmu.edu.cn/bdlp_h5_fitness_test"),
+        base_url=base_url,
         auth=_build_dataclass(AuthConfig, auth_data),
         target=target_cfg,
         scheduler=_build_dataclass(SchedulerConfig, scheduler_data),
@@ -383,58 +459,32 @@ def save_phpsessid(config_path: str, new_token: str) -> bool:
     """
     持久化回写新的 PHPSESSID 至配置文件，保留原有注释与缩进
     """
-    if not os.path.exists(config_path):
-        return False
-
-    import re
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            content = f.read()
-    except Exception:
-        content = ""
-
-    pattern = r'(phpsessid:\s*)(["\']?[a-zA-Z0-9_-]*["\']?)'
-    if re.search(pattern, content):
-        new_content = re.sub(pattern, rf'\g<1>"{new_token}"', content, count=1)
-        try:
-            yaml.safe_load(new_content)
-            with open(config_path, "w", encoding="utf-8") as f:
-                f.write(new_content)
-            return True
-        except yaml.YAMLError:
-            pass
-
-    data = safe_load_yaml_file(config_path)
-    if "auth" not in data or not isinstance(data["auth"], dict):
-        data["auth"] = {}
-    data["auth"]["phpsessid"] = new_token
-    new_content = yaml.dump(data, allow_unicode=True, sort_keys=False)
-
-    with open(config_path, "w", encoding="utf-8") as f:
-        f.write(new_content)
-    return True
+    if not isinstance(new_token, str) or not new_token:
+        raise ValueError("PHPSESSID 不能为空")
+    def edit(content: str) -> str:
+        pattern = r'(?m)^(\s*phpsessid:[ \t]*)([^\r\n]*)'
+        if re.search(pattern, content):
+            return re.sub(pattern, lambda m: m.group(1) + json.dumps(new_token), content, count=1)
+        data = yaml.safe_load(content) or {}
+        data.setdefault("auth", {})["phpsessid"] = new_token
+        return yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+    return _update_config(config_path, edit)
 
 def save_auth_params(config_path: str, params: Dict[str, Any]) -> bool:
     """
     持久化回写 checkLogin 续登参数 auth_params 至配置文件
     """
-    if not os.path.exists(config_path):
-        return False
-
-    data = safe_load_yaml_file(config_path)
-    if "auth" not in data or not isinstance(data["auth"], dict):
-        data["auth"] = {}
-    if "auth_params" not in data["auth"] or not isinstance(data["auth"]["auth_params"], dict):
-        data["auth"]["auth_params"] = {}
-
-    data["auth"]["auth_params"].update(params)
-    if "uid" in params and params["uid"]:
-        data["auth"]["uid"] = str(params["uid"])
-
-    new_content = yaml.dump(data, allow_unicode=True, sort_keys=False)
-    with open(config_path, "w", encoding="utf-8") as f:
-        f.write(new_content)
-    return True
+    def edit(content: str) -> str:
+        data = yaml.safe_load(content) or {}
+        if not isinstance(data.get("auth"), dict):
+            data["auth"] = {}
+        if not isinstance(data["auth"].get("auth_params"), dict):
+            data["auth"]["auth_params"] = {}
+        data["auth"]["auth_params"].update(params)
+        if params.get("uid"):
+            data["auth"]["uid"] = str(params["uid"])
+        return yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+    return _update_config(config_path, edit)
 
 def save_target_and_scheduler_config(
     config_path: str,
@@ -449,36 +499,29 @@ def save_target_and_scheduler_config(
     if scheduler_updates is not None and not isinstance(scheduler_updates, dict):
         raise ValueError("定时配置必须是字典映射")
 
-    if not os.path.exists(config_path):
-        return False
+    def edit(content: str) -> str:
+        data = yaml.safe_load(content) or {}
+        if not isinstance(data, dict):
+            data = {}
+        if target_updates:
+            if "target" not in data or not isinstance(data["target"], dict):
+                data["target"] = {}
+            data["target"].update(target_updates)
+        if scheduler_updates:
+            if "scheduler" not in data or not isinstance(data["scheduler"], dict):
+                data["scheduler"] = {}
+            data["scheduler"].update(scheduler_updates)
 
-    data = safe_load_yaml_file(config_path)
-    if not isinstance(data, dict):
-        data = {}
+        if "target" in data and isinstance(data["target"], dict):
+            _build_dataclass(TargetConfig, data["target"])
+        if "scheduler" in data and isinstance(data["scheduler"], dict):
+            validated_scheduler = _build_dataclass(SchedulerConfig, data["scheduler"])
+            data["scheduler"]["target_time"] = validated_scheduler.target_time
+            data["scheduler"]["weekly_plan"] = validated_scheduler.weekly_plan
+            data["scheduler"]["date_overrides"] = validated_scheduler.date_overrides
 
-    if target_updates:
-        if "target" not in data or not isinstance(data["target"], dict):
-            data["target"] = {}
-        data["target"].update(target_updates)
-
-    if scheduler_updates:
-        if "scheduler" not in data or not isinstance(data["scheduler"], dict):
-            data["scheduler"] = {}
-        data["scheduler"].update(scheduler_updates)
-
-    # 校验合法性，避免写入非法参数导致下次启动崩溃
-    if "target" in data and isinstance(data["target"], dict):
-        _build_dataclass(TargetConfig, data["target"])
-    if "scheduler" in data and isinstance(data["scheduler"], dict):
-        validated_scheduler = _build_dataclass(SchedulerConfig, data["scheduler"])
-        data["scheduler"]["target_time"] = validated_scheduler.target_time
-        data["scheduler"]["weekly_plan"] = validated_scheduler.weekly_plan
-        data["scheduler"]["date_overrides"] = validated_scheduler.date_overrides
-
-    new_content = yaml.dump(data, allow_unicode=True, sort_keys=False)
-    with open(config_path, "w", encoding="utf-8") as f:
-        f.write(new_content)
-    return True
+        return yaml.dump(data, allow_unicode=True, sort_keys=False)
+    return _update_config(config_path, edit)
 
 
 def save_notify_config(
@@ -490,59 +533,41 @@ def save_notify_config(
     """
     持久化回写通知配置 (通知总开关、接收邮箱、通知通道) 至 config.yaml
     """
-    if not os.path.exists(config_path):
-        return False
+    def edit(content: str) -> str:
+        data = yaml.safe_load(content) or {}
+        if not isinstance(data, dict):
+            data = {}
+        if "notify" not in data or not isinstance(data["notify"], dict):
+            data["notify"] = {}
 
-    data = safe_load_yaml_file(config_path)
-    if not isinstance(data, dict):
-        data = {}
-
-    if "notify" not in data or not isinstance(data["notify"], dict):
-        data["notify"] = {}
-
-    if enabled is not None:
-        data["notify"]["enabled"] = bool(enabled)
-
-    if channel is not None:
-        data["notify"]["channel"] = str(channel).strip()
-
-    if email is not None:
-        email_clean = str(email).strip()
-        if "email" not in data["notify"] or not isinstance(data["notify"]["email"], dict):
-            data["notify"]["email"] = {}
-        if email_clean:
-            data["notify"]["email"]["to_addrs"] = [email_clean]
-        else:
-            data["notify"]["email"]["to_addrs"] = []
-        # 若开启了通知且填了邮箱，确保通道默认对齐为 email
-        if data["notify"].get("enabled") and email_clean and not data["notify"].get("channel"):
-            data["notify"]["channel"] = "email"
-
-    new_content = yaml.dump(data, allow_unicode=True, sort_keys=False)
-    with open(config_path, "w", encoding="utf-8") as f:
-        f.write(new_content)
-    return True
+        if enabled is not None:
+            data["notify"]["enabled"] = bool(enabled)
+        if channel is not None:
+            data["notify"]["channel"] = str(channel).strip()
+        if email is not None:
+            email_clean = str(email).strip()
+            if "email" not in data["notify"] or not isinstance(data["notify"]["email"], dict):
+                data["notify"]["email"] = {}
+            if email_clean:
+                data["notify"]["email"]["to_addrs"] = [email_clean]
+            else:
+                data["notify"]["email"]["to_addrs"] = []
+            if data["notify"].get("enabled") and email_clean and not data["notify"].get("channel"):
+                data["notify"]["channel"] = "email"
+        return yaml.dump(data, allow_unicode=True, sort_keys=False)
+    return _update_config(config_path, edit)
 
 
 def save_cas_credentials(config_path: str, username: str, password: str) -> bool:
     """
     持久化回写统一身份认证 (CAS) 账号密码至 config.yaml
     """
-    if not os.path.exists(config_path):
-        return False
-
-    data = safe_load_yaml_file(config_path)
-    if not isinstance(data, dict):
-        data = {}
-
-    if "auth" not in data or not isinstance(data["auth"], dict):
-        data["auth"] = {}
-
-    data["auth"]["cas_username"] = str(username).strip()
-    data["auth"]["cas_password"] = str(password)
-
-    new_content = yaml.dump(data, allow_unicode=True, sort_keys=False)
-    with open(config_path, "w", encoding="utf-8") as f:
-        f.write(new_content)
-    return True
+    def edit(content: str) -> str:
+        data = yaml.safe_load(content) or {}
+        if not isinstance(data.get("auth"), dict):
+            data["auth"] = {}
+        data["auth"]["cas_username"] = str(username).strip()
+        data["auth"]["cas_password"] = str(password)
+        return yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+    return _update_config(config_path, edit)
 

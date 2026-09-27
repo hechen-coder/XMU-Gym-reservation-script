@@ -75,7 +75,8 @@ class TestWebServer(unittest.TestCase):
         code, body = handler._send_json.call_args[0]
         self.assertEqual(code, 200)
         self.assertTrue(body["success"])
-        self.assertEqual(body["token"], "new_phpsessid_abcdef123456")
+        self.assertNotIn("token", body)
+        self.assertIn("new_phps", body["phpsessid"])
 
     @patch("xdty_booking.web.server.load_config")
     @patch("xdty_booking.web.server.SessionManager.refresh_session_via_check_login")
@@ -152,7 +153,8 @@ class TestWebServer(unittest.TestCase):
         html = render_dashboard(data)
 
         # 1. 验证预约按钮传参包含 this，不依赖易受污染的 window.event
-        self.assertIn("bookSlot('9999', '2026-09-20', '19:30-21:00', this)", html)
+        self.assertIn('data-interval-id="9999"', html)
+        self.assertIn('bookSlot(this.dataset.intervalId, this.dataset.date, this.dataset.timeRange, this)', html)
 
         # 2. 验证弹窗具备右上角关闭按钮
         self.assertIn('id="customDialogCloseBtn"', html)
@@ -343,5 +345,31 @@ class TestWebServer(unittest.TestCase):
         self.assertFalse(body["success"])
         self.assertFalse(body["session_valid"])
         self.assertIn("登录凭证已失效", body["info"])
+
+
+def test_start_login_monitor_runs_daemon_with_notifier(tmp_path):
+    from unittest.mock import patch
+    from xdty_booking.web.server import start_login_monitor
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(
+        'auth:\n  phpsessid: "sess"\n  heartbeat_interval_seconds: 300\n'
+        'notify:\n  enabled: true\n  channel: feishu\n  feishu:\n    webhook_url: "https://example/hook"\n',
+        encoding="utf-8",
+    )
+    with patch("xdty_booking.web.server.SessionManager.check_alive", return_value=True):
+        mgr = start_login_monitor(str(cfg_file))
+        try:
+            assert mgr is not None and mgr._running is True
+            assert mgr._thread is not None and mgr._thread.daemon is True
+        finally:
+            mgr.stop()
+
+
+def test_start_login_monitor_disabled_when_interval_is_zero(tmp_path):
+    from xdty_booking.web.server import start_login_monitor
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text('auth:\n  phpsessid: "sess"\n  heartbeat_interval_seconds: 0\n', encoding="utf-8")
+    assert start_login_monitor(str(cfg_file)) is None
+
 
 

@@ -54,7 +54,7 @@ def test_booking_engine_slot_not_found():
 def test_booking_engine_retry_on_captcha_error():
     api = Mock()
     solver = Mock()
-    solver.solve.side_effect = ["wrong", "daxs"]
+    solver.solve.side_effect = ["daxs", "wxyz"]
     
     slot = SlotItem(
         column_id="67",

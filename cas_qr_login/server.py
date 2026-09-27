@@ -6,7 +6,8 @@ import socketserver
 import sys
 import threading
 import time
-from urllib.parse import parse_qs, urlparse
+import yaml
+from urllib.parse import parse_qs, urlparse, urlsplit
 
 # 加入项目根目录导入支持
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -15,7 +16,8 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from cas_qr_login.cas_client import CasQrLoginClient
-from xdty_booking.config import save_phpsessid, save_auth_params, load_config
+from xdty_booking.config import save_phpsessid, save_auth_params, load_config, _write_private
+from xdty_booking.security.auth import check_license
 
 logger = logging.getLogger("CasQrServer")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -362,7 +364,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             updateStatus("scanning", "正在向统一认证中心申请 UUID...");
 
             try {
-                const res = await fetch("/api/qr");
+                const res = await fetch("/api/qr", {method: "POST", headers: {"Content-Type": "application/json"}});
                 const data = await res.json();
                 if (data.success) {
                     document.getElementById("qrImg").src = data.qr_image;
@@ -392,7 +394,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     return;
                 }
                 try {
-                    const res = await fetch("/api/status");
+                    const res = await fetch("/api/status", {method: "POST", headers: {"Content-Type": "application/json"}});
                     const data = await res.json();
 
                     if (data.code === "0") {
@@ -452,7 +454,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             for (const [key, label] of Object.entries(fieldLabels)) {
                 if (p[key]) {
                     const row = document.createElement("tr");
-                    row.innerHTML = `<td>${label}</td><td>${p[key]}</td>`;
+                    const name = row.insertCell();
+                    const value = row.insertCell();
+                    name.textContent = label;
+                    value.textContent = p[key];
                     tbody.appendChild(row);
                 }
             }
@@ -460,7 +465,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             // 存活状态
             if (resData.user_info) {
                 const row = document.createElement("tr");
-                row.innerHTML = `<td>会话在线存活探测</td><td style="color: #10b981; font-weight: bold;">✅ ${resData.user_info.status}</td>`;
+                row.insertCell().textContent = "会话在线存活探测";
+                const value = row.insertCell();
+                value.style.color = "#10b981";
+                value.style.fontWeight = "bold";
+                value.textContent = "✅ " + resData.user_info.status;
                 tbody.appendChild(row);
             }
 
@@ -484,7 +493,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             btn.innerText = "⏳ 正在写入配置文件...";
 
             try {
-                const res = await fetch("/api/save_config", { method: "POST" });
+                const res = await fetch("/api/save_config", { method: "POST", headers: {"Content-Type": "application/json"} });
                 const d = await res.json();
                 if (d.success) {
                     showToast("💾 已成功写入 config/config.yaml！");
@@ -517,87 +526,84 @@ class CasQrRequestHandler(http.server.SimpleHTTPRequestHandler):
         # 简化终端访问日志
         pass
 
-    def do_GET(self):
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(15)
+
+    def _allowed(self):
+        host = self.headers.get("Host", "")
+        try:
+            if urlsplit(f"http://{host}").hostname not in ("localhost", "127.0.0.1", "::1"):
+                return False
+            return all(not self.headers.get(h) or urlsplit(self.headers[h]).netloc.lower() == host.lower()
+                       for h in ("Origin", "Referer"))
+        except ValueError:
+            return False
+
+    def _json(self, code, data):
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+
+    _send_json = _json
+
+    def _handle_qr(self):
         global cas_client, login_result, is_logging_in, has_login_failed
+        with state_lock:
+            try:
+                cas_client = CasQrLoginClient()
+                login_result = None
+                is_logging_in = False
+                has_login_failed = False
+                uuid, _ = cas_client.init_qr_session()
+                data = {"success": True, "uuid": uuid, "qr_image": cas_client.get_qr_image_base64()}
+            except Exception as e:
+                logger.error("初始化二维码失败: %s", type(e).__name__)
+                data = {"success": False, "error": "二维码初始化失败"}
+        self._json(200, data)
+
+    def _handle_status(self):
+        global login_result, is_logging_in, has_login_failed
+        with state_lock:
+            if login_result:
+                data = {"code": "1", "desc": "登录成功！", "logged_in": True, "data": login_result}
+            elif has_login_failed:
+                data = {"code": "error", "desc": "凭证置换异常，请刷新二维码重试", "logged_in": False, "data": None}
+            else:
+                code, desc = cas_client.check_status()
+                logged_in = False
+                # 只有手机端确认授权后才提交 CAS 表单换取凭据
+                if code == "1" and not is_logging_in:
+                    is_logging_in = True
+                    try:
+                        login_result = cas_client.exchange_and_login()
+                        logged_in = True
+                    except Exception as e:
+                        logger.error("换发登录凭据异常: %s", type(e).__name__)
+                        login_result = None
+                        has_login_failed = True
+                        desc = "凭据换发异常，请刷新二维码重试"
+                data = {"code": code, "desc": desc, "logged_in": logged_in, "data": login_result}
+        self._json(200, data)
+
+    def do_GET(self):
+        if not self._allowed():
+            self.send_error(403, "Forbidden")
+            return
         parsed = urlparse(self.path)
         path = parsed.path
 
         if path == "/" or path == "/index.html":
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(HTML_TEMPLATE.encode("utf-8"))
 
-        elif path == "/api/qr":
-            with state_lock:
-                try:
-                    cas_client = CasQrLoginClient()
-                    login_result = None
-                    is_logging_in = False
-                    has_login_failed = False
-                    uuid, _ = cas_client.init_qr_session()
-                    b64_img = cas_client.get_qr_image_base64()
-                    
-                    data = {
-                        "success": True,
-                        "uuid": uuid,
-                        "qr_image": b64_img
-                    }
-                except Exception as e:
-                    logger.error(f"初始化二维码失败: {e}", exc_info=True)
-                    data = {"success": False, "error": str(e)}
-
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(json.dumps(data).encode("utf-8"))
-
-        elif path == "/api/status":
-            with state_lock:
-                if login_result:
-                    data = {
-                        "code": "1",
-                        "desc": "登录成功！",
-                        "logged_in": True,
-                        "data": login_result
-                    }
-                elif has_login_failed:
-                    data = {
-                        "code": "error",
-                        "desc": "凭证置换异常，请点击下方按钮刷新二维码重新扫码",
-                        "logged_in": False,
-                        "data": None
-                    }
-                else:
-                    code, desc = cas_client.check_status()
-                    logged_in = False
-
-                    # 只有手机端点击了【确认登录】(code == "1") 时，才触发后台表单提交与凭据换发！
-                    # code == "2" 时表示已扫码但手机端尚未确认，不可提前提交！
-                    if code == "1" and not is_logging_in:
-                        is_logging_in = True
-                        logger.info("🎯 检测到手机端扫码确认授权完成 (code=1)，开始触发 CAS 票据提交与 Token 置换...")
-                        try:
-                            res = cas_client.exchange_and_login()
-                            login_result = res
-                            logged_in = True
-                        except Exception as e:
-                            logger.error(f"换发登录凭据异常: {e}", exc_info=True)
-                            login_result = None
-                            has_login_failed = True
-                            desc = f"凭据换发异常: {e}"
-
-                    data = {
-                        "code": code,
-                        "desc": desc,
-                        "logged_in": logged_in,
-                        "data": login_result
-                    }
-
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(json.dumps(data).encode("utf-8"))
+        elif path in ("/api/qr", "/api/status"):
+            self.send_error(405, "Method Not Allowed")
 
         elif path == "/dashboard" or path == "/gym":
             from xdty_booking.web.server import query_gym_status
@@ -608,32 +614,54 @@ class CasQrRequestHandler(http.server.SimpleHTTPRequestHandler):
                 html = render_dashboard(data)
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 self.wfile.write(html.encode("utf-8"))
             except Exception as e:
-                logger.error(f"加载预约页面异常: {e}")
-                self.send_error(500, f"Error: {e}")
+                logger.error("加载预约页面异常: %s", type(e).__name__)
+                self.send_error(500, "Internal Server Error")
 
-        elif path.startswith("/api/book"):
-            from xdty_booking.web.server import book_gym_slot
-            params = parse_qs(parsed.query)
-            interval_id = params.get("interval_id", [None])[0]
-            date = params.get("date", [None])[0]
-            time_slot = params.get("time", [None])[0]
-            config_file = os.path.join(PROJECT_ROOT, "config", "config.yaml")
-            res = book_gym_slot(interval_id=interval_id, date=date, time_slot=time_slot, config_path=config_file, auto_heal=True)
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(json.dumps(res, ensure_ascii=False).encode("utf-8"))
+        elif path == "/api/book":
+            self.send_error(405, "Method Not Allowed")
 
         else:
             self.send_error(404, "Not Found")
 
     def do_POST(self):
+        if not self._allowed():
+            self.send_error(403, "Forbidden")
+            return
+        if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
+            self._json(415, {"success": False, "error": "仅接受 JSON 请求"})
+            return
         global cas_client, login_result
         parsed = urlparse(self.path)
         path = parsed.path
+
+        if path == "/api/qr":
+            self._handle_qr()
+            return
+        if path == "/api/status":
+            self._handle_status()
+            return
+        if path == "/api/book":
+            if not check_license().is_licensed:
+                self._json(403, {"success": False, "error": "LICENSE_REQUIRED"})
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 0 < length <= 65536:
+                    raise ValueError("invalid length")
+                body = json.loads(self.rfile.read(length))
+                if not isinstance(body, dict):
+                    raise ValueError("invalid body")
+                from xdty_booking.web.server import GymStatusHandler
+                # 复用主服务的场次参数校验与预约处理。
+                self.booking_config_path = os.path.join(PROJECT_ROOT, "config", "config.yaml")
+                GymStatusHandler._handle_book(self, {k: [v] for k, v in body.items()})
+            except (TypeError, ValueError):
+                self._json(400, {"success": False, "error": "预约参数无效"})
+            return
 
         if path == "/api/save_config":
             with state_lock:
@@ -654,34 +682,26 @@ class CasQrRequestHandler(http.server.SimpleHTTPRequestHandler):
                             logger.info(f"💾 凭据已成功持久化回写至主配置: {config_file}")
 
                         # 同时也写一份本地 config.yaml
-                        lines = [
-                            "# 厦大统一身份认证 · 自动生成凭证备份\n",
-                            f"phpsessid: \"{phpsessid}\"\n",
-                            "auth_params:\n"
-                        ]
-                        for k, v in (auth_params or {}).items():
-                            lines.append(f"  {k}: \"{v}\"\n")
-                        with open(local_config_file, "w", encoding="utf-8") as f:
-                            f.writelines(lines)
+                        _write_private(local_config_file, yaml.safe_dump(
+                            {"phpsessid": phpsessid, "auth_params": auth_params},
+                            allow_unicode=True, sort_keys=False
+                        ))
                         logger.info(f"💾 凭据已成功持久化回写至模块配置: {local_config_file}")
 
                         data = {"success": True, "message": "配置保存成功"}
                     except Exception as e:
-                        logger.error(f"写入配置文件失败: {e}")
-                        data = {"success": False, "error": str(e)}
+                        logger.error("写入配置文件失败: %s", type(e).__name__)
+                        data = {"success": False, "error": "写入配置文件失败"}
 
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(json.dumps(data).encode("utf-8"))
+            self._json(200, data)
         else:
             self.send_error(404, "Not Found")
 
-def start_cas_qr_server(port: int = 8899) -> http.server.HTTPServer:
+def start_cas_qr_server(port: int = 8899) -> http.server.ThreadingHTTPServer:
     """启动扫码认证 Web 服务"""
     server_address = ("127.0.0.1", port)
     
-    class ReusableTCPServer(socketserver.TCPServer):
+    class ReusableTCPServer(http.server.ThreadingHTTPServer):
         allow_reuse_address = True
 
     httpd = ReusableTCPServer(server_address, CasQrRequestHandler)

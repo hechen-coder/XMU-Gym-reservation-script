@@ -92,6 +92,11 @@ def build_cli_parser():
         help="Web 服务监听端口 (默认: 8080)"
     )
     parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Web 监听地址（仅支持本机回环地址）"
+    )
+    parser.add_argument(
         "--no-fallback",
         action="store_true",
         help="禁用首选时段满额时的自动就近时段降级"
@@ -188,12 +193,12 @@ def main():
             example_path = "config/config.example.yaml"
         if os.path.exists(example_path):
             if os.path.basename(config_path) == "config.yaml":
-                import shutil
                 try:
-                    shutil.copy(example_path, config_path)
+                    from xdty_booking.config import ensure_config_file
+                    ensure_config_file(config_path, example_path)
                     logger.info(f"💡 首次运行检测：已自动为您生成默认配置文件 '{config_path}'！")
                 except Exception as e:
-                    logger.warning(f"自动生成配置文件失败: {e}，将回退读取示例配置")
+                    logger.warning("自动生成配置文件失败: %s，将回退读取示例配置", type(e).__name__)
                     config_path = example_path
             else:
                 logger.warning(f"未找到 '{config_path}'，将回退读取示例配置 '{example_path}'")
@@ -362,7 +367,7 @@ def main():
             logger.error(f"查询场馆空闲状态失败: {e}")
 
     elif args.action == "web":
-        run_server(port=args.port, config_path=config_path)
+        run_server(port=args.port, config_path=config_path, host=args.host)
 
     elif args.action in ("book", "snipe"):
         ensure_valid_session(cfg, session_mgr, client, config_path, timeout=args.timeout)

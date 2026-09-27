@@ -2,13 +2,16 @@ import os
 import json
 import logging
 import threading
+import re
+import math
 from datetime import datetime, timedelta
-from urllib.parse import urlparse, parse_qs
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs, urlsplit
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from typing import Optional, Dict, Any
 
 from xdty_booking.config import (
     load_config,
+    ensure_config_file,
     save_phpsessid,
     save_auth_params,
     save_cas_credentials,
@@ -53,9 +56,8 @@ def _ensure_config_path(config_path: Optional[str] = None) -> str:
             example_path = "config/config.example.yaml"
         if os.path.exists(example_path):
             if os.path.basename(path) == "config.yaml":
-                import shutil
                 try:
-                    shutil.copy(example_path, path)
+                    ensure_config_file(path, example_path)
                     logger.info(f"💡 首次运行检测：已自动为您生成配置文件 '{path}'")
                     return path
                 except Exception:
@@ -514,10 +516,38 @@ def query_gym_status(config_path: Optional[str] = None, auto_heal: bool = True) 
 class GymStatusHandler(BaseHTTPRequestHandler):
     """8080 端口 HTTP 核心请求处理器"""
 
+    def log_message(self, format, *args):
+        # 默认访问日志会写入包含凭据的 URL 查询串。
+        pass
+
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(15)
+
+    def _local_request(self) -> bool:
+        host = self.headers.get("Host", "")
+        try:
+            host_name = urlsplit(f"http://{host}").hostname
+            if host_name not in ("localhost", "127.0.0.1", "::1"):
+                return False
+            for header in ("Origin", "Referer"):
+                value = self.headers.get(header)
+                if value and urlsplit(value).netloc.lower() != host.lower():
+                    return False
+        except ValueError:
+            return False
+        return True
+
+    def _reject_foreign_request(self) -> bool:
+        if self._local_request():
+            return False
+        self._send_json(403, {"success": False, "info": "请求来源无效"})
+        return True
+
     def _send_json(self, status_code: int, data: Any):
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         payload = json.dumps(data, ensure_ascii=False, default=lambda o: o.__dict__ if hasattr(o, "__dict__") else str(o)).encode("utf-8")
         self.wfile.write(payload)
@@ -525,6 +555,7 @@ class GymStatusHandler(BaseHTTPRequestHandler):
     def _send_html(self, status_code: int, html_str: str):
         self.send_response(status_code)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(html_str.encode("utf-8"))
 
@@ -532,43 +563,55 @@ class GymStatusHandler(BaseHTTPRequestHandler):
         interval_id = params.get("interval_id", [None])[0]
         date = params.get("date", [None])[0]
         time_slot = params.get("time", [None])[0]
+        if not isinstance(interval_id, str) or not interval_id.strip() or not isinstance(date, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) or not isinstance(time_slot, str) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d-(?:[01]\d|2[0-3]):[0-5]\d", time_slot) or time_slot[:5] >= time_slot[6:]:
+            self._send_json(400, {"success": False, "info": "预约场次、日期或时段无效"})
+            return
         try:
+            datetime.fromisoformat(date)
             res = book_gym_slot(
                 interval_id=interval_id,
                 date=date,
                 time_slot=time_slot,
-                config_path=_GLOBAL_CONFIG_PATH,
+                config_path=getattr(self, "booking_config_path", _GLOBAL_CONFIG_PATH),
                 auto_heal=True
             )
             self._send_json(200, res)
+        except ValueError:
+            self._send_json(400, {"success": False, "info": "预约日期无效"})
         except Exception as e:
-            logger.error(f"预约处理异常: {e}")
-            self._send_json(500, {"success": False, "info": f"服务器内部错误: {e}"})
+            logger.error("预约处理异常: %s", type(e).__name__)
+            self._send_json(500, {"success": False, "info": "服务器内部错误"})
 
     def _handle_set_token(self, params: Dict[str, Any]):
         token = params.get("token", [None])[0]
-        if not token or not str(token).strip():
+        if not token:
             self._send_json(400, {"success": False, "info": "Token 不能为空"})
             return
         token = str(token).strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", token):
+            self._send_json(400, {"success": False, "info": "Token 格式无效"})
+            return
         try:
             c_path = _ensure_config_path(_GLOBAL_CONFIG_PATH)
-            save_phpsessid(c_path, token)
             cfg = load_config(c_path)
             client = ApiClient(base_url=cfg.base_url)
             client.set_session_token(token)
             api = XdtyApi(client, uid=cfg.auth.uid if cfg.auth.uid else None)
             mgr = SessionManager(api, phpsessid=token)
             alive = mgr.check_alive()
+            if not alive:
+                self._send_json(400, {"success": False, "alive": False, "info": "Token 校验未通过，原配置未修改"})
+                return
+            save_phpsessid(c_path, token)
             self._send_json(200, {
                 "success": True,
                 "alive": alive,
                 "phpsessid": f"{token[:8]}***",
-                "info": "🎉 Token 保存成功且存活有效！" if alive else "⚠️ Token 已保存至配置文件，但在服务端校验未通过 (可能过期或复制有误)"
+                "info": "🎉 Token 保存成功且存活有效！"
             })
         except Exception as e:
-            logger.error(f"保存 Token 异常: {e}")
-            self._send_json(500, {"success": False, "info": f"服务器内部错误: {e}"})
+            logger.error("保存 Token 异常: %s", type(e).__name__)
+            self._send_json(500, {"success": False, "info": "服务器内部错误"})
 
     def _handle_relogin(self):
         try:
@@ -586,7 +629,6 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             if new_token:
                 self._send_json(200, {
                     "success": True,
-                    "token": new_token,
                     "phpsessid": f"{new_token[:8]}***",
                     "info": f"🎉 纯 HTTP 自动续登成功！最新 PHPSESSID: {new_token[:8]}*** 已生效并持久化。"
                 })
@@ -596,42 +638,45 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                     "info": "❌ checkLogin 纯 HTTP 续登未成功，可能长效 Token 已过期，请尝试微信小程序嗅探兜底。"
                 })
         except Exception as e:
-            logger.error(f"HTTP 自动续登异常: {e}")
-            self._send_json(500, {"success": False, "info": f"服务器内部错误: {e}"})
+            logger.error("HTTP 自动续登异常: %s", type(e).__name__)
+            self._send_json(500, {"success": False, "info": "服务器内部错误"})
 
     def do_POST(self):
+        if self._reject_foreign_request():
+            return
+        if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
+            self._send_json(415, {"success": False, "info": "仅接受 JSON 请求"})
+            return
         parsed = urlparse(self.path)
-        content_len = int(self.headers.get('Content-Length', 0))
-        params = {}
-        if content_len > 0:
-            try:
-                body = self.rfile.read(content_len).decode('utf-8')
-                body_json = json.loads(body)
-                for k, v in body_json.items():
-                    params[k] = [v]
-            except Exception:
-                pass
-        if not params:
-            params = parse_qs(parsed.query)
+        try:
+            content_len = int(self.headers.get("Content-Length", "0"))
+            if content_len < 0 or content_len > 65536:
+                self._send_json(413, {"success": False, "info": "请求内容过大"})
+                return
+            body_json = json.loads(self.rfile.read(content_len)) if content_len else {}
+            if not isinstance(body_json, dict):
+                raise ValueError("JSON object required")
+        except (ValueError, UnicodeDecodeError, TimeoutError):
+            self._send_json(400, {"success": False, "info": "请求 JSON 格式无效"})
+            return
+        params = {k: [v] for k, v in body_json.items()}
 
         # 0. 授权激活专属 API (免拦截)
         if parsed.path.startswith("/api/license/activate"):
-            key_data = (
-                body_json.get("license_key")
-                or body_json.get("code")
-                or (params.get("license_key", [None])[0] if params.get("license_key") else None)
-            )
-            if not key_data and content_len > 0:
-                try:
-                    key_data = body
-                except Exception:
-                    pass
+            key_data = body_json.get("license_key") or body_json.get("code")
             ok, msg = activate_license(key_data)
             self._send_json(200, {
                 "success": ok,
                 "info": msg,
                 "status": get_auth_status()
             })
+            return
+
+        if parsed.path == "/api/qr":
+            self._handle_qr_init()
+            return
+        if parsed.path in ("/api/qr_status", "/api/qr/status"):
+            self._handle_qr_status()
             return
 
         # 针对打包客户端发布版的业务 API 强控守卫拦截 (开发模式自动放行)
@@ -645,20 +690,12 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             })
             return
 
-        if parsed.path == "/api/qr" or parsed.path.startswith("/api/qr?"):
-            self._handle_qr_init()
-            return
-        if parsed.path in ("/api/qr_status", "/api/qr/status") or parsed.path.startswith("/api/qr_status?"):
-            self._handle_qr_status()
-            return
-        if parsed.path.startswith("/api/pw_login"):
-            self._handle_pw_login(body_json)
-            return
-
         if parsed.path.startswith("/api/book"):
             self._handle_book(params)
         elif parsed.path.startswith("/api/relogin"):
             self._handle_relogin()
+        elif parsed.path.startswith("/api/pw_login"):
+            self._handle_pw_login(body_json)
         elif parsed.path.startswith("/api/set_token"):
             self._handle_set_token(params)
         elif parsed.path.startswith("/api/scheduler/start"):
@@ -679,6 +716,8 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             self._handle_notify_test(body_json, params)
         elif parsed.path.startswith("/api/orders/my") or parsed.path.startswith("/api/my_orders"):
             self._handle_my_orders()
+        elif parsed.path == "/api/harvest":
+            self._handle_harvest()
         else:
             self._send_json(404, {"error": "Not Found"})
 
@@ -703,10 +742,21 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             if body.get("remember"):
                 save_cas_credentials(c_path, username, password)
             logger.info(f"💾 账号密码登录凭据已持久化回写至配置文件: {c_path}")
-            self._send_json(200, res)
+            self._send_json(200, {"success": True, "logged_in": True})
         except Exception as e:
-            logger.error(f"账号密码登录失败: {e}")
-            self._send_json(200, {"success": False, "error": str(e)})
+            logger.error("账号密码登录失败: %s", type(e).__name__)
+            message = "用户名或者密码有误" if "用户名或者密码有误" in str(e) else "登录失败，请检查账号、验证码或网络后重试"
+            self._send_json(200, {"success": False, "logged_in": False, "error": message})
+
+    def _handle_harvest(self):
+        try:
+            c_path = _ensure_config_path(_GLOBAL_CONFIG_PATH)
+            cfg = load_config(c_path)
+            token = HarvestService(cfg, config_path=c_path).harvest(timeout=60.0)
+            self._send_json(200, {"success": bool(token), "info": "凭证已成功获取并更新" if token else "未能成功从微信小程序获取凭证"})
+        except Exception as e:
+            logger.error("微信嗅探异常: %s", type(e).__name__)
+            self._send_json(500, {"success": False, "info": "服务器内部错误"})
 
     def _handle_scheduler_config_save(self, body_json: dict, params: dict):
         try:
@@ -837,7 +887,16 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             target_date = body_json.get("target_date") or (params.get("target_date", [None])[0] if params.get("target_date") else None)
             preferred_time = body_json.get("preferred_time") or (params.get("preferred_time", [None])[0] if params.get("preferred_time") else None)
             poll_interval = float(body_json.get("poll_interval") or (params.get("poll_interval", [2.0])[0] if params.get("poll_interval") else 2.0))
-            fallback_nearest = bool(body_json.get("fallback_nearest", False) or (params.get("fallback_nearest", [False])[0] if params.get("fallback_nearest") else False))
+            fallback_nearest = body_json.get("fallback_nearest", False)
+            if target_date:
+                datetime.strptime(target_date, "%Y-%m-%d")
+            if preferred_time:
+                from xdty_booking.config import SchedulerConfig
+                SchedulerConfig._check_slot(preferred_time)
+            if not math.isfinite(poll_interval) or not 1.0 <= poll_interval <= 60.0:
+                raise ValueError("捡漏轮询间隔须在 1 到 60 秒之间")
+            if not isinstance(fallback_nearest, bool):
+                raise ValueError("就近降级参数必须是布尔值")
 
             res = _snipe_manager.start(
                 config_path=c_path,
@@ -847,17 +906,19 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                 fallback_nearest=fallback_nearest
             )
             self._send_json(200, res)
+        except (TypeError, ValueError) as e:
+            self._send_json(400, {"success": False, "info": str(e)})
         except Exception as e:
-            logger.error(f"启动捡漏监听异常: {e}", exc_info=True)
-            self._send_json(500, {"success": False, "info": str(e)})
+            logger.error("启动捡漏监听异常: %s", type(e).__name__)
+            self._send_json(500, {"success": False, "info": "服务器内部错误"})
 
     def _handle_snipe_stop(self):
         try:
             res = _snipe_manager.stop()
             self._send_json(200, res)
         except Exception as e:
-            logger.error(f"停止捡漏监听异常: {e}", exc_info=True)
-            self._send_json(500, {"success": False, "info": str(e)})
+            logger.error("停止捡漏监听异常: %s", type(e).__name__)
+            self._send_json(500, {"success": False, "info": "服务器内部错误"})
 
     def _handle_campus_switch(self, body_json: dict, params: dict):
         try:
@@ -865,10 +926,9 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             campus = body_json.get("campus") or (params.get("campus", [None])[0] if params.get("campus") else None)
             if not campus:
                 stadium_id = body_json.get("stadium_id") or (params.get("stadium_id", [None])[0] if params.get("stadium_id") else None)
-                if stadium_id and str(stadium_id) == "6":
-                    campus = "siming"
-                else:
-                    campus = "xiangan"
+                campus = "siming" if str(stadium_id) == "6" else "xiangan" if str(stadium_id) == "16" else None
+            if not isinstance(campus, str) or campus.lower() not in ("siming", "6", "思明", "xiangan", "16", "翔安"):
+                raise ValueError("请选择有效校区")
 
             if str(campus).lower() in ("siming", "6", "思明"):
                 target_updates = {
@@ -898,9 +958,11 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                 "target": target_updates,
                 "info": f"已成功切换至{campus_name}！"
             })
+        except ValueError as e:
+            self._send_json(400, {"success": False, "info": str(e)})
         except Exception as e:
-            logger.error(f"切换校区异常: {e}", exc_info=True)
-            self._send_json(500, {"success": False, "info": str(e)})
+            logger.error("切换校区异常: %s", type(e).__name__)
+            self._send_json(500, {"success": False, "info": "服务器内部错误"})
 
     def _handle_notify_config_get(self):
         try:
@@ -1194,56 +1256,34 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             self._send_html(200, render_qr_login_page(is_already_logged_in=False, phpsessid_masked=""))
 
     def do_GET(self):
+        if self._reject_foreign_request():
+            return
         parsed = urlparse(self.path)
         path = parsed.path
+
+        if path in ("/api/book", "/api/relogin", "/api/set_token", "/api/harvest", "/api/campus/switch", "/api/qr", "/api/qr_status", "/api/qr/status", "/api/pw_login"):
+            self._send_json(405, {"success": False, "info": "请使用 POST"})
+            return
 
         # 0. 授权状态查询专属 API
         if path.startswith("/api/license/status"):
             self._send_json(200, get_auth_status())
             return
 
-        # 针对会产生预约或续登行为的 GET API 进行客户端未激活拦截
-        if any(path.startswith(prefix) for prefix in ("/api/book", "/api/relogin", "/api/harvest")):
-            auth_res = check_license()
-            if not auth_res.is_licensed:
-                self._send_json(403, {
-                    "success": False,
-                    "error": "LICENSE_REQUIRED",
-                    "info": f"当前软件未激活或授权已到期！请先在界面完成激活。本机机器码: {auth_res.hwid}",
-                    "hwid": auth_res.hwid
-                })
-                return
-
-        # 1. 一键预约 API
-        if path.startswith("/api/book"):
-            params = parse_qs(parsed.query)
-            self._handle_book(params)
-
-        # 2. 纯 HTTP 自动续登 API
-        elif path.startswith("/api/relogin"):
-            self._handle_relogin()
-
-        # 3. 扫码登录：初始化获取二维码 API
-        elif path.startswith("/api/qr") and not path.startswith("/api/qr_status") and not path.startswith("/api/qr/status"):
-            self._handle_qr_init()
-
-        # 4. 扫码登录：轮询认证状态 API
-        elif path.startswith("/api/qr_status") or path.startswith("/api/qr/status"):
-            self._handle_qr_status()
-
-        # 5. 企业微信扫码登录页面
-        elif path == "/login" or path == "/login.html" or path == "/qr_login":
+        # 企业微信扫码登录页面
+        if path in ("/login", "/login.html", "/qr_login"):
             self._handle_login_page()
 
-        # 6. 查询余量 JSON API
-        elif path.startswith("/api/status") or path.startswith("/status.json"):
+        # 查询余量 JSON API
+        elif path.startswith("/api/status") or path.startswith("/status.json") or path in ("/api/gym/status", "/api/gym"):
             try:
                 data = query_gym_status(_GLOBAL_CONFIG_PATH)
                 self._send_json(200, data)
             except Exception as e:
-                self._send_json(500, {"error": str(e)})
+                logger.error("查询状态异常: %s", type(e).__name__)
+                self._send_json(500, {"error": "服务器内部错误"})
 
-        # 7. 登录态探测 API
+        # 登录态探测 API
         elif path.startswith("/api/check"):
             try:
                 c_path = _ensure_config_path(_GLOBAL_CONFIG_PATH)
@@ -1266,88 +1306,35 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                     "has_auth_params": has_auth
                 })
             except Exception as e:
-                self._send_json(500, {"error": str(e)})
+                logger.error("登录态探测异常: %s", type(e).__name__)
+                self._send_json(500, {"error": "服务器内部错误"})
 
-        # 8. 手动设置/保存 PHPSESSID
-        elif path.startswith("/api/set_token"):
-            params = parse_qs(parsed.query)
-            self._handle_set_token(params)
-
-        # 9. 手动触发微信自愈嗅探 API
-        elif path.startswith("/api/harvest"):
-            try:
-                c_path = _ensure_config_path(_GLOBAL_CONFIG_PATH)
-                cfg = load_config(c_path)
-                service = HarvestService(cfg, config_path=c_path)
-                token = service.harvest(timeout=60.0)
-                if token:
-                    self._send_json(200, {"success": True, "token": token, "info": "凭证已成功获取并更新"})
-                else:
-                    self._send_json(200, {"success": False, "info": "未能成功从微信小程序获取凭证"})
-            except Exception as e:
-                self._send_json(500, {"success": False, "info": str(e)})
-
-        # 10. 定时预约守护任务状态与配置 API
+        # 定时预约守护任务状态与配置 API
         elif path.startswith("/api/scheduler/status"):
             self._handle_scheduler_status()
         elif path.startswith("/api/scheduler/config"):
             self._handle_scheduler_config_get()
 
-        # 11. 捡漏监听任务状态 API
+        # 捡漏监听任务状态 API
         elif path.startswith("/api/snipe/status"):
             self._handle_snipe_status()
 
-        # 11.1 校区切换 GET API
-        elif path.startswith("/api/campus/switch"):
-            params = parse_qs(parsed.query)
-            self._handle_campus_switch({}, params)
-
-        # 11.2 获取通知设置 API
+        # 获取通知设置 API
         elif path.startswith("/api/notify/config"):
             self._handle_notify_config_get()
 
-        # 11.3 发送测试通知 API
-        elif path.startswith("/api/notify/test"):
-            params = parse_qs(parsed.query)
-            self._handle_notify_test(params=params)
-
-        # 11.4 查看我的预约记录 API
+        # 查看我的预约记录 API
         elif path.startswith("/api/orders/my") or path.startswith("/api/my_orders"):
             self._handle_my_orders()
 
-        # 12. Web 仪表板首页 (体育馆场次查询与预约大厅)
-        else:
+        # Web 仪表板首页 (体育馆场次查询与预约大厅)
+        elif path in ("/", "/index.html", "/dashboard", "/gym"):
             try:
-                # 支持通过 ?campus=siming 或 ?campus=xiangan 或 ?stadium_id=6 在 URL 直接访问并切换校区
-                params = parse_qs(parsed.query)
-                if "campus" in params or "stadium_id" in params:
-                    c_val = params.get("campus", [""])[0]
-                    s_val = params.get("stadium_id", [""])[0]
-                    if c_val.lower() in ("siming", "6", "思明") or s_val == "6":
-                        t_updates = {
-                            "stadium_id": 6,
-                            "stadium_name": "思明校区健身房",
-                            "area_name": "思明校区健身房",
-                            "venue_id": 6,
-                            "area_id": 0,
-                            "user_range": "[]"
-                        }
-                    else:
-                        t_updates = {
-                            "stadium_id": 16,
-                            "stadium_name": "翔安校区健身房",
-                            "area_name": "爱秋体育馆健身房",
-                            "venue_id": 14,
-                            "area_id": 67,
-                            "user_range": "[67]"
-                        }
-                    save_target_and_scheduler_config(_GLOBAL_CONFIG_PATH, target_updates=t_updates)
-
                 data = query_gym_status(_GLOBAL_CONFIG_PATH)
                 html = render_dashboard(data)
                 self._send_html(200, html)
             except Exception as e:
-                logger.error(f"加载页面异常: {e}", exc_info=True)
+                logger.error("加载页面异常: %s", type(e).__name__)
                 has_auth = False
                 try:
                     c_path = _ensure_config_path(_GLOBAL_CONFIG_PATH)
@@ -1361,7 +1348,7 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                     "query_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "session_valid": False,
                     "has_auth_params": has_auth,
-                    "info": f"系统连接或数据解析异常: {e}",
+                    "info": "系统连接或数据解析异常",
                     "groups": [],
                     "notify_config": {
                         "enabled": False,
@@ -1370,6 +1357,8 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                     }
                 }
                 self._send_html(200, render_dashboard(fallback_data))
+        else:
+            self._send_json(404, {"error": "Not Found"})
 
 def start_login_monitor(config_path: str) -> Optional[SessionManager]:
     """
@@ -1396,23 +1385,26 @@ def start_login_monitor(config_path: str) -> Optional[SessionManager]:
     return mgr
 
 
-def run_server(port: int = 8080, config_path: str = "config/config.yaml"):
+def run_server(port: int = 8080, config_path: str = "config/config.yaml", host: str = "127.0.0.1"):
     global _GLOBAL_CONFIG_PATH
     _GLOBAL_CONFIG_PATH = config_path
 
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        raise ValueError("Web 控制台只允许监听本机回环地址；远程访问请使用 SSH 隧道")
+
     try:
-        server = HTTPServer(("0.0.0.0", port), GymStatusHandler)
+        server = ThreadingHTTPServer((host, port), GymStatusHandler)
     except OSError as e:
         logger.warning(f"本地 Web 服务端口 {port} 已被占用，服务已处于运行中: {e}")
         print(f"\n⚠️ 本地 Web 服务端口 {port} 已被占用，服务已在运行中。\n")
         return
 
-    logger.info(f"🚀 健身房实时监控与预约 Web 服务已启动: http://localhost:{port}")
-    logger.info(f"👉 网页一键预约与监控大厅: http://localhost:{port}/")
-    logger.info(f"👉 企业微信扫码登录直达: http://localhost:{port}/login")
-    logger.info(f"👉 实时 JSON API: http://localhost:{port}/api/status")
-    logger.info(f"👉 凭证自愈 API: http://localhost:{port}/api/harvest")
-    print(f"\n服务启动成功！浏览器访问: http://localhost:{port} (扫码登录: http://localhost:{port}/login)\n")
+    logger.info(f"🚀 健身房实时监控与预约 Web 服务已启动: http://{host}:{port}")
+    logger.info(f"👉 网页一键预约与监控大厅: http://{host}:{port}/")
+    logger.info(f"👉 企业微信扫码登录直达: http://{host}:{port}/login")
+    logger.info(f"👉 实时 JSON API: http://{host}:{port}/api/status")
+    logger.info(f"👉 凭证自愈 API: http://{host}:{port}/api/harvest")
+    print(f"\n服务启动成功！浏览器访问: http://{host}:{port} (扫码登录: http://{host}:{port}/login)\n")
     start_login_monitor(config_path)
     try:
         server.serve_forever()

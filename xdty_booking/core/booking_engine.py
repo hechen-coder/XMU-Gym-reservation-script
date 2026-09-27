@@ -142,10 +142,11 @@ class BookingEngine:
                         "success": True,
                         "info": order_res.get("info", "预约成功"),
                         "data": order_res.get("data"),
-                        "slot": slot
+                        "slot": slot,
+                        "duplicate": bool(order_res.get("duplicate"))
                     }
                     # 触发即时通知
-                    if self.notifier and self.notifier.is_enabled():
+                    if not result["duplicate"] and self.notifier and self.notifier.is_enabled():
                         slot_dict = slot.to_dict()
                         slot_dict.update({
                             "stadium_name": target.stadium_name,
@@ -155,10 +156,14 @@ class BookingEngine:
                         try:
                             self.notifier.send_booking_success(slot_dict, order_res)
                         except Exception as ne:
-                            logger.error(f"发送预约成功通知异常: {ne}")
+                            logger.error("发送预约成功通知异常: %s", type(ne).__name__)
                     return result
 
                 info_msg = str(order_res.get("info", "")) if isinstance(order_res, dict) else ""
+                if isinstance(order_res, dict) and order_res.get("outcome_unknown"):
+                    return {"success": False, "info": info_msg, "reason": "outcome_unknown"}
+                if isinstance(order_res, dict) and order_res.get("in_progress"):
+                    return {"success": False, "info": info_msg, "reason": "booking_in_progress"}
                 if any(word in info_msg for word in ("课程", "排课", "教学占用", "教学排课占用")):
                     return _skip_course_occupied(info_msg)
                 if "验证码" in info_msg:
@@ -167,11 +172,13 @@ class BookingEngine:
                         time.sleep(0.2)
                         img_bytes = self.api.get_captcha()
                         new_code = str(self.solver.solve(img_bytes) or "")
-                        if len(new_code) == 4:
-                            captcha_code = new_code
-                            logger.info(f"重新拉取并识别出新验证码: '{captcha_code}'")
+                        if len(new_code) != 4:
+                            return {"success": False, "info": "验证码识别失败，未再次提交预约", "reason": "captcha_failed"}
+                        captcha_code = new_code
+                        logger.info(f"重新拉取并识别出新验证码: '{captcha_code}'")
                     except Exception as e:
-                        logger.error(f"重新获取验证码发生异常: {e}")
+                        logger.error("重新获取验证码发生异常: %s", type(e).__name__)
+                        return {"success": False, "info": "验证码获取失败，未再次提交预约", "reason": "captcha_failed"}
                 elif "频繁" in info_msg:
                     time.sleep(1.0)
                 elif "满" in info_msg or "超额" in info_msg:
@@ -181,9 +188,12 @@ class BookingEngine:
                         "raw": last_order_res,
                         "capacity_full": True
                     }
+                else:
+                    return {"success": False, "info": info_msg or "预约被服务端拒绝", "reason": "order_rejected"}
 
             except Exception as e:
-                logger.error(f"预约请求发送异常: {e}")
+                logger.error("预约请求发送异常: %s", type(e).__name__)
+                return {"success": False, "info": "提交结果未知，请先核对官方预约记录", "reason": "outcome_unknown"}
 
             time.sleep(self.cfg.scheduler.retry_interval_ms / 1000.0)
 
@@ -225,9 +235,8 @@ class BookingEngine:
                 user_range=target.user_range
             )
         except Exception as e:
-            err = f"查询场次列表网络异常: {e}"
-            logger.error(err)
-            return {"success": False, "info": err, "reason": "query_failed"}
+            logger.error("查询场次列表网络异常: %s", type(e).__name__)
+            return {"success": False, "info": "查询场次列表失败，请检查网络", "reason": "query_failed"}
 
         if getattr(intervals, "status", 1) != 1:
             err = f"查询场次失败: {getattr(intervals, 'info', '') or '服务端返回异常'}"
@@ -341,6 +350,8 @@ class BookingEngine:
             if fallback_res.get("success"):
                 fallback_res["fallback"] = True
                 return fallback_res
+            if fallback_res.get("reason") in ("outcome_unknown", "booking_in_progress"):
+                return fallback_res
 
         logger.error(f"日期 {target_date_str} 的所有就近备选时段均尝试完毕，无可用名额")
         return {"success": False, "info": "首选时段及所有就近备选时段均已约满", "full": True}
@@ -394,6 +405,9 @@ class BookingEngine:
                 logger.warning(f"⚠️ 目标时段已被课程占用，已停止捡漏: {res.get('info')}")
                 if status_callback:
                     status_callback(attempt, f"⚠️ 课程占用跳过: {res.get('info')}")
+                return res
+
+            if res.get("reason") in ("outcome_unknown", "booking_in_progress"):
                 return res
 
             if not res.get("full"):
