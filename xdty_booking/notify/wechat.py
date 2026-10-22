@@ -73,8 +73,9 @@ def invalidate(config, token):
 
 
 class WeChatClient:
-    def __init__(self, credentials=None):
+    def __init__(self, credentials=None, *, use_env_proxy=False):
         self.credentials = credentials or {}
+        self.use_env_proxy = use_env_proxy
         self.base_url = trusted_base_url(
             self.credentials.get("base_url") or self.credentials.get("baseUrl") or BASE_URL)
 
@@ -91,6 +92,10 @@ class WeChatClient:
                 "X-WECHAT-UIN": base64.b64encode(str(int.from_bytes(os.urandom(4), "big")).encode()).decode(),
             })
         kwargs = {"headers": headers, "timeout": (5, timeout), "allow_redirects": False}
+        if not self.use_env_proxy:
+            # Explicit empty routes override Windows/system/ALL_PROXY settings locally.
+            # Keep TLS certificate verification enabled and leave other clients untouched.
+            kwargs["proxies"] = {"http": "", "https": "", "all": ""}
         url = base + "/ilink/bot/" + endpoint
         try:
             if payload is None:
@@ -101,19 +106,37 @@ class WeChatClient:
                     body["base_info"] = {"channel_version": CHANNEL_VERSION, "bot_agent": "XMU-Gym/1.0"}
                 response = requests.post(url, params=params, json=body, **kwargs)
             if 300 <= response.status_code < 400:
-                raise WeChatError("微信接口重定向异常")
+                raise WeChatError(f"微信接口 {endpoint} 重定向异常 (HTTP {response.status_code})")
             response.raise_for_status()
+        except requests.HTTPError as exc:
+            status = getattr(exc.response, "status_code", None)
+            raise WeChatError(f"微信接口 {endpoint} 请求失败 (HTTP {status})") from None
+        except (requests.RequestException, ValueError) as exc:
+            # Never echo raw exceptions: they may include credentials or QR query strings.
+            if isinstance(exc, ValueError) and "check_hostname requires server_hostname" in str(exc):
+                reason = "代理 TLS 初始化失败，请关闭 wechat.use_env_proxy 或修正系统代理"
+            elif isinstance(exc, requests.exceptions.ProxyError):
+                reason = "代理连接失败，请检查代理或关闭 wechat.use_env_proxy"
+            elif isinstance(exc, requests.exceptions.SSLError):
+                reason = "TLS 证书验证失败，请检查证书和网络"
+            elif isinstance(exc, requests.Timeout):
+                reason = "请求超时"
+            else:
+                reason = f"网络连接失败 ({type(exc).__name__})"
+            raise WeChatError(f"微信接口 {endpoint}：{reason}") from None
+        try:
             result = response.json()
-        except (requests.RequestException, ValueError):
-            # Exceptions and server messages may contain tokens or login URLs.
-            raise WeChatError("微信接口请求失败，请检查网络后重试") from None
+        except ValueError:
+            raise WeChatError(f"微信接口 {endpoint} 返回了非 JSON 内容 (HTTP {response.status_code})") from None
         if not isinstance(result, dict):
-            raise WeChatError("微信接口返回格式异常")
+            raise WeChatError(f"微信接口 {endpoint} 返回格式异常")
         codes = (result.get("ret", 0), result.get("errcode", 0))
         if -14 in codes:
             raise SessionExpired("微信登录已过期，请重新连接")
         if any(code != 0 for code in codes):
-            raise WeChatError("微信接口拒绝请求，请重新连接或向 bot 发一条消息后重试")
+            # Only numeric business codes are safe to expose; exclude server text.
+            safe_codes = ", ".join(f"{key}={value}" for key, value in zip(("ret", "errcode"), codes) if isinstance(value, int))
+            raise WeChatError(f"微信接口 {endpoint} 拒绝请求 ({safe_codes or '业务码格式异常'})，请重新连接或向 bot 发一条消息后重试")
         return result
 
     def send(self, state, text, timeout=15):
@@ -137,12 +160,13 @@ def send_wechat(config, title, content):
     try:
         credentials = load_json(config.cred_path)
         state = load_json(config.state_path)
-        WeChatClient(credentials).send(state, title + "\n" + content, config.send_timeout)
+        WeChatClient(credentials, use_env_proxy=config.use_env_proxy).send(state, title + "\n" + content, config.send_timeout)
         logger.info("微信 bot 通知已提交")
         return True
     except SessionExpired:
         invalidate(config, credentials.get("token"))
         logger.warning("微信 bot 登录已过期，请重新连接")
     except Exception as exc:
-        logger.warning("微信 bot 通知失败 (%s)，请检查连接状态或重新绑定", type(exc).__name__)
+        reason = str(exc) if isinstance(exc, WeChatError) else type(exc).__name__
+        logger.warning("微信 bot 通知失败：%s", reason)
     return False

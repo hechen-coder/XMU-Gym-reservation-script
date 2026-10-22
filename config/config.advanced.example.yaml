@@ -104,3 +104,4 @@ notify:
     cred_path: "wechatbot-credentials.json"  # 相对本配置文件目录
     state_path: "wechat_state.json"
     send_timeout: 15
+    use_env_proxy: false  # 默认微信接口直连；确需使用系统/环境代理时改为 true

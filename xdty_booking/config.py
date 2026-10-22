@@ -323,10 +323,13 @@ class WeChatConfig:
     cred_path: str = "wechatbot-credentials.json"
     state_path: str = "wechat_state.json"
     send_timeout: int = 15
+    use_env_proxy: bool = False
 
     def __post_init__(self):
         if not isinstance(self.enabled, bool):
             raise ValueError("wechat.enabled 必须是布尔值")
+        if not isinstance(self.use_env_proxy, bool):
+            raise ValueError("wechat.use_env_proxy 必须是布尔值")
         if isinstance(self.send_timeout, bool) or not isinstance(self.send_timeout, int) or not 1 <= self.send_timeout <= 60:
             raise ValueError("wechat.send_timeout 必须为 1 至 60 秒")
         if not all(isinstance(p, str) and p.strip() for p in (self.cred_path, self.state_path)):

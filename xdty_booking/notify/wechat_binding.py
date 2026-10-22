@@ -101,7 +101,7 @@ class WeChatBinding:
     def _login(self):
         import qrcode
         existing = load_json(self.config.cred_path)
-        client = WeChatClient()
+        client = WeChatClient(use_env_proxy=self.config.use_env_proxy)
         qr = client.request("get_bot_qrcode", {"local_token_list": [existing["token"]] if existing.get("token") else []},
                             params={"bot_type": "3"}, auth=False)
         code, url = qr.get("qrcode"), qr.get("qrcode_img_content")
@@ -119,7 +119,10 @@ class WeChatBinding:
                 result = client.request("get_qrcode_status", base_url=base,
                                         params={"qrcode": code, **({"verify_code": verify} if verify else {})},
                                         timeout=35, auth=False)
-            except WeChatError:
+            except WeChatError as exc:
+                if not self._stop.is_set():
+                    logger.warning("微信扫码状态查询失败：%s", exc)
+                    self._set("retrying", str(exc) + "；正在重试")
                 if self._stop.wait(2):
                     return None
                 continue
@@ -143,6 +146,8 @@ class WeChatBinding:
                 raise WeChatError("此 bot 已绑定但本机缺少凭据，请在微信中解绑后重试")
             if phase == "scaned_but_redirect":
                 base = trusted_base_url("https://" + str(result.get("redirect_host", "")))
+            elif phase == "wait":
+                self._set("wait", "用手机微信扫码并确认连接")
             elif phase == "scaned":
                 verify = ""
                 self._set("scaned", "已扫码，请在手机微信确认")
@@ -192,7 +197,7 @@ class WeChatBinding:
             credentials = self._login() if login else load_json(self.config.cred_path)
             if not credentials or self._stop.is_set():
                 return
-            client = WeChatClient(credentials)
+            client = WeChatClient(credentials, use_env_proxy=self.config.use_env_proxy)
             try:
                 client.request("msg/notifystart", {})
             except SessionExpired:
@@ -207,10 +212,11 @@ class WeChatBinding:
                     self._accept_updates(credentials, result)
                 except SessionExpired:
                     raise
-                except WeChatError:
+                except WeChatError as exc:
                     if self._stop.is_set():
                         break
-                    self._set("retrying", "微信连接暂时中断，正在重试")
+                    logger.warning("微信消息监听失败：%s", exc)
+                    self._set("retrying", str(exc) + "；正在重试")
                     if self._stop.wait(5):
                         break
                 if self._stop.wait(1):
@@ -220,6 +226,7 @@ class WeChatBinding:
             if not self._stop.is_set():
                 self._set("expired", "微信登录已过期，请重新连接", "")
         except Exception as exc:
-            logger.warning("微信连接失败 (%s)", type(exc).__name__)
+            reason = str(exc) if isinstance(exc, WeChatError) else type(exc).__name__
+            logger.warning("微信连接失败：%s", reason)
             if not self._stop.is_set():
                 self._set("error", str(exc) if isinstance(exc, WeChatError) else "微信连接失败，请检查网络和依赖后重试", "")

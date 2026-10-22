@@ -69,6 +69,7 @@ def test_actual_send_wire_format_and_unique_ids(configured):
     assert calls[0].args[0].endswith("/ilink/bot/sendmessage")
     assert first["headers"]["Authorization"] == "Bearer private-token"
     assert first["allow_redirects"] is False
+    assert first["proxies"] == {"http": "", "https": "", "all": ""}
     assert first["timeout"] == (5, 15)
     msg = first["json"]["msg"]
     assert msg["from_user_id"] == ""
@@ -214,3 +215,66 @@ def test_bad_api_config_never_persists(body, tmp_path):
         handler._handle_notify_config_post(body)
     assert handler._send_json.call_args.args[0] == 400
     assert path.read_text(encoding="utf-8") == "notify: {}\n"
+
+
+def test_windows_proxy_is_overridden_only_for_wechat():
+    res = requests.Response()
+    res.status_code = 200
+    res._content = b'{"ret":0,"qrcode":"qr","qrcode_img_content":"url"}'
+    broken_proxy = {"http": "https://127.0.0.1:7890", "https": "https://127.0.0.1:7890", "all": "https://127.0.0.1:7890"}
+    with patch("requests.sessions.get_environ_proxies", return_value=broken_proxy.copy()), patch("requests.sessions.Session.send", return_value=res) as send:
+        assert WeChatClient().request("get_bot_qrcode", {}, auth=False)["qrcode"] == "qr"
+        assert not any(send.call_args.kwargs["proxies"].values())
+        # Other clients continue to inherit their configured proxies.
+        requests.get("https://example.com")
+        assert send.call_args.kwargs["proxies"]["https"] == broken_proxy["https"]
+
+
+def test_proxy_opt_in_applies_to_post_and_qr_poll():
+    client = WeChatClient(use_env_proxy=True)
+    with patch("xdty_booking.notify.wechat.requests.post", return_value=response({"ret": 0})) as post:
+        client.request("get_bot_qrcode", {}, auth=False)
+        assert "proxies" not in post.call_args.kwargs
+    with patch("xdty_booking.notify.wechat.requests.get", return_value=response({"status": "wait"})) as get:
+        client.request("get_qrcode_status", params={"qrcode": "private-qr"}, auth=False)
+        assert "proxies" not in get.call_args.kwargs
+
+
+def test_legacy_tls_proxy_error_explains_failure_without_secrets():
+    error = ValueError("check_hostname requires server_hostname private-token")
+    with patch("xdty_booking.notify.wechat.requests.post", side_effect=error):
+        with pytest.raises(WeChatError, match="get_bot_qrcode.*代理 TLS") as raised:
+            WeChatClient(use_env_proxy=True).request("get_bot_qrcode", {}, auth=False)
+    assert "private-token" not in str(raised.value)
+
+
+def test_http_and_json_failures_identify_endpoint_without_server_text():
+    res = response({"errmsg": "private-token"}, 403)
+    res.raise_for_status.side_effect = requests.HTTPError("private-token", response=res)
+    with patch("xdty_booking.notify.wechat.requests.post", return_value=res):
+        with pytest.raises(WeChatError, match="get_bot_qrcode.*HTTP 403") as raised:
+            WeChatClient().request("get_bot_qrcode", {}, auth=False)
+        assert "private-token" not in str(raised.value)
+    res = response({}, 200)
+    res.json.side_effect = ValueError("private-token")
+    with patch("xdty_booking.notify.wechat.requests.get", return_value=res):
+        with pytest.raises(WeChatError, match="get_qrcode_status.*非 JSON"):
+            WeChatClient().request("get_qrcode_status", auth=False)
+
+
+def test_binding_logs_actionable_sanitized_failure(configured, caplog):
+    binding = WeChatBinding(configured)
+    with patch.object(binding, "_login", side_effect=WeChatError("微信接口 get_bot_qrcode：请求超时")):
+        binding._run(login=True)
+    assert "get_bot_qrcode" in caplog.text and "请求超时" in caplog.text
+    assert binding.status()["phase"] == "error"
+    assert "private-token" not in caplog.text
+
+
+def test_proxy_config_accepts_only_boolean(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("notify:\n  wechat:\n    use_env_proxy: true\n", encoding="utf-8")
+    assert load_config(str(path)).notify.wechat.use_env_proxy is True
+    path.write_text("notify:\n  wechat:\n    use_env_proxy: 'false'\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="use_env_proxy"):
+        load_config(str(path))
