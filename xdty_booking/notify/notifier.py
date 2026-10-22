@@ -9,6 +9,7 @@ from email.header import Header
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from html import escape
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any, Optional
 import requests
 
@@ -46,7 +47,32 @@ class Notifier:
 
         full_title = f"{self.cfg.title_prefix} {title}".strip()
         channel = (self.cfg.channel or "email").lower()
-        html = html_content or content.replace("\n", "<br>")
+        html = html_content or escape(content).replace("\n", "<br>")
+
+        # Run independently so a slow/broken bot cannot prevent email delivery.
+        if self.cfg.wechat.enabled:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                wechat = pool.submit(self._send_wechat, full_title, content)
+                remaining = pool.submit(self._send_channels, channel, full_title, content, html)
+                for name, future in (("channels", remaining), ("wechat", wechat)):
+                    try:
+                        value = future.result()
+                        if name == "channels":
+                            results.update(value)
+                        else:
+                            results[name] = value
+                    except Exception as exc:
+                        logger.warning("通知通道失败 (%s): %s", name, type(exc).__name__)
+                        results[name] = False
+            return results
+        return self._send_channels(channel, full_title, content, html)
+
+    def _send_wechat(self, title, content):
+        from .wechat import send_wechat
+        return send_wechat(self.cfg.wechat, title, content)
+
+    def _send_channels(self, channel, full_title, content, html):
+        results = {}
 
         # PushPlus
         if channel in ("pushplus", "all") and self.cfg.pushplus.token:
@@ -68,7 +94,7 @@ class Notifier:
         if channel in ("feishu", "all") and self.cfg.feishu and self.cfg.feishu.webhook_url:
             results["feishu"] = self._send_feishu(full_title, content)
 
-        if not results:
+        if not results and not self.cfg.wechat.enabled:
             logger.warning("未配置任何可用的通知通道或凭证为空，请检查 config.yaml 中的 notify 配置")
 
         return results
@@ -213,54 +239,16 @@ class Notifier:
         area_name = slot_info.get("area_name", "")
         mode = slot_info.get("mode", "预约")
 
-        title = f"🎉 抢票成功提醒: {date} {time_slot}"
-        
-        text = f"""🎉 恭喜！厦大体育馆场地抢票成功！
-------------------------------------------------
-【预约模式】{mode}
-【场馆项目】{venue} ({area_name})
-【预约日期】{date}
-【预约时段】{time_slot}
-【场次 I D】{slot_info.get('interval_id', 'N/A')}
-【订单详情】{order_info.get('info', '已成功下单锁定') if order_info else '预约完成'}
-------------------------------------------------
-请在微信小程序【厦大体育】或系统历史记录中核对。"""
-
-        safe = {
-            "mode": escape(str(mode)),
-            "venue": escape(str(venue)),
-            "area": escape(str(area_name)),
-            "date": escape(str(date)),
-            "time": escape(str(time_slot)),
-            "interval": escape(str(slot_info.get("interval_id", "N/A")))
-        }
-        html = f"""
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 500px; padding: 20px; border-radius: 10px; background: #f0fdf4; border: 1px solid #bbf7d0;">
-            <h2 style="color: #166534; margin-top: 0;">🎉 厦大体育馆抢票成功！</h2>
-            <p style="color: #374151; font-size: 14px;">您的场地已成功完成预约下单，详细信息如下：</p>
-            <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px;">
-                <tr><td style="padding: 6px 0; color: #6b7280;">预约模式:</td><td style="font-weight: bold; color: #1f2937;">{safe['mode']}</td></tr>
-                <tr><td style="padding: 6px 0; color: #6b7280;">场馆名称:</td><td style="font-weight: bold; color: #1f2937;">{safe['venue']} - {safe['area']}</td></tr>
-                <tr><td style="padding: 6px 0; color: #6b7280;">预约日期:</td><td style="font-weight: bold; color: #1f2937;">{safe['date']}</td></tr>
-                <tr><td style="padding: 6px 0; color: #6b7280;">预约时段:</td><td style="font-weight: bold; color: #15803d; font-size: 16px;">{safe['time']}</td></tr>
-                <tr><td style="padding: 6px 0; color: #6b7280;">场次 ID:</td><td style="color: #1f2937;">{safe['interval']}</td></tr>
-            </table>
-            <div style="margin-top: 16px; padding: 10px; background: #ffffff; border-radius: 6px; font-size: 13px; color: #4b5563;">
-                💡 提醒：请准时到场锻炼打卡。如计划变动请在规定时间内退票，避免违约。
-            </div>
-        </div>
-        """
+        title = f"预约成功 · {date} {time_slot}"
+        location = venue if not area_name or area_name == venue else f"{venue} · {area_name}"
+        text = f"{location}\n{date} {time_slot}\n请在「厦大体育」核对预约，按时到场。"
+        html = (f"<h3>{escape(title)}</h3><p>{escape(location)}</p>"
+                f"<p>{escape(str(date))} {escape(str(time_slot))}</p>"
+                "<p>请在「厦大体育」核对预约，按时到场。</p>")
         return self.send(title=title, content=text, html_content=html)
 
     def send_test(self) -> Dict[str, bool]:
         """发送测试消息验证通道是否通畅"""
         title = "系统通知测试"
-        text = "您好！这是一条来自【厦大体育馆自动预约系统】的测试通知。如果您收到了这条消息，说明通知功能已配置就绪！"
-        html = f"""
-        <div style="font-family: sans-serif; padding: 16px; border-radius: 8px; background: #eff6ff; border: 1px solid #bfdbfe;">
-            <h3 style="color: #1e40af; margin-top: 0;">🚀 厦大体育馆自动预约 - 通知通道测试</h3>
-            <p style="color: #1f2937; font-size: 14px;">{text}</p>
-            <p style="color: #6b7280; font-size: 12px; margin-bottom: 0;">测试时间: {requests.utils.default_user_agent()}</p>
-        </div>
-        """
-        return self.send(title=title, content=text, html_content=html)
+        text = "通知通道测试，请检查是否收到。"
+        return self.send(title=title, content=text)

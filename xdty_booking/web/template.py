@@ -1191,9 +1191,9 @@ def render_dashboard(data: dict) -> str:
         </div>
     </div>
 
-    <!-- 抢票结果通知设置模态框 (QQ邮箱/微信联动即时通知) -->
+    <!-- 邮箱与微信 bot 独立通知 -->
     <div id="notifyModal" class="modal-overlay" style="display: none;">
-        <div class="modal-card" style="max-width: 520px;">
+        <div class="modal-card" style="max-width: 520px; max-height: 90vh; overflow-y: auto;">
             <div class="modal-header">
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <span style="font-size: 24px;">🔔</span>
@@ -1209,7 +1209,7 @@ def render_dashboard(data: dict) -> str:
                 <div class="rule-banner" style="background: #f0fdf4; border: 1.5px solid #bbf7d0; padding: 10px 14px;">
                     <div style="color: #15803d; font-size: 13px; display: flex; align-items: center; gap: 6px;">
                         <span>✨</span>
-                        <span>填写您的 <strong>邮箱</strong> 后，系统将自动投递邮件通知。</span>
+                        <span>邮箱与微信 bot 可单独使用，也可同时接收通知。</span>
                     </div>
                 </div>
 
@@ -1231,21 +1231,36 @@ def render_dashboard(data: dict) -> str:
                         <span>接收通知的邮箱:</span>
                         <span style="font-size: 11px; color: #2563eb; font-weight: normal;">支持 QQ / 163 / 厦大校园邮箱</span>
                     </label>
-                    <input type="email" id="notifyEmailInput" value="{notify_email}" placeholder="例如: 123456789@qq.com" style="width: 100%; box-sizing: border-box; padding: 10px 14px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 14px; outline: none; transition: border-color .2s;" onfocus="this.style.borderColor='#2563eb'" onblur="this.style.borderColor='#cbd5e1'">
+                    <input type="email" id="notifyEmailInput" value="{escape(notify_email, quote=True)}" placeholder="例如: 123456789@qq.com" style="width: 100%; box-sizing: border-box; padding: 10px 14px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 14px; outline: none; transition: border-color .2s;" onfocus="this.style.borderColor='#2563eb'" onblur="this.style.borderColor='#cbd5e1'">
                     <p style="font-size: 12px; color: #64748b; margin: 6px 0 0 0;">
-                        通知将发送至填写的邮箱。微信提醒取决于账号绑定、相关功能和通知设置。
+                        填写即接收邮件；留空则不发送邮件。
                     </p>
                 </div>
 
-                <!-- 微信设置排查折叠指引 -->
-                <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 12px; font-size: 12px; color: #1e40af; line-height: 1.6;">
-                    <div style="font-weight: 700; margin-bottom: 3px;">📱 可选：微信邮件提醒</div>
-                    如需微信提醒，请检查微信中的 QQ 邮箱提醒功能及通知设置。具体可用性以您的账号和客户端为准，建议先发送测试邮件。
+                <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 12px; font-size: 13px; line-height: 1.6;">
+                    <label style="display: flex; align-items: center; gap: 8px; font-weight: 700;">
+                        <input type="checkbox" id="notifyWechatSwitch">微信 bot 通知（ClawBot）
+                    </label>
+                    <p style="font-size: 12px; color: #475569; margin: 6px 0;">扫码连接后，用扫码账号向 bot 发一条消息完成绑定。登录过期时需重新连接。</p>
+                    <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                        <button type="button" class="btn-action" id="wechatConnectBtn" onclick="wechatAction('login')">扫码连接</button>
+                        <button type="button" class="btn-action" onclick="wechatAction('resume')">恢复连接</button>
+                        <button type="button" class="btn-action" onclick="wechatAction('disconnect')">断开连接</button>
+                    </div>
+                    <p id="wechatNotifyStatus" role="status" style="margin: 8px 0 0;">尚未连接微信 bot</p>
+                    <img id="wechatNotifyQr" alt="微信 bot 登录二维码" style="display: none; width: 200px; max-width: 100%; margin: 8px auto;">
+                    <div id="wechatVerifyBox" style="display: none; margin-top: 8px;">
+                        <label for="wechatVerifyCode">手机微信显示的配对码</label>
+                        <div style="display: flex; gap: 8px; margin-top: 4px;">
+                            <input id="wechatVerifyCode" inputmode="numeric" autocomplete="off" maxlength="12" style="width: 100%; min-width: 0;">
+                            <button type="button" class="btn-action" onclick="wechatAction('verify')">提交</button>
+                        </div>
+                    </div>
                 </div>
             </div>
 
             <div class="modal-footer">
-                <button type="button" class="btn-action" id="btnTestNotify" onclick="sendTestNotification()" style="font-size: 13px; padding: 8px 14px; display: inline-flex; align-items: center; gap: 6px;" title="向指定邮箱发送测试邮件验证通道">
+                <button type="button" class="btn-action" id="btnTestNotify" onclick="sendTestNotification()" style="font-size: 13px; padding: 8px 14px; display: inline-flex; align-items: center; gap: 6px;" title="测试当前填写的邮箱和已开启的微信通道">
                     <span>🧪 发送测试通知</span>
                 </button>
                 <div style="display: flex; gap: 10px;">
@@ -1975,13 +1990,21 @@ def render_dashboard(data: dict) -> str:
             fetchMyOrders();
         }});
 
+        let _wechatPoll = null;
+        let _wechatStatusPending = false;
+
         function openNotifyModal() {{
             const modal = document.getElementById("notifyModal");
             if (modal) modal.style.display = "flex";
             fetchNotifyConfig();
+            fetchWechatStatus();
+            if (_wechatPoll) clearInterval(_wechatPoll);
+            _wechatPoll = setInterval(fetchWechatStatus, 2000);
         }}
 
         function closeNotifyModal() {{
+            if (_wechatPoll) clearInterval(_wechatPoll);
+            _wechatPoll = null;
             const modal = document.getElementById("notifyModal");
             if (modal) modal.style.display = "none";
         }}
@@ -1991,14 +2014,15 @@ def render_dashboard(data: dict) -> str:
                 const res = await fetch("/api/notify/config");
                 const data = await res.json();
                 if (data.status === "ok") {{
-                    updateNotifyUIState(!!data.enabled, data.email || "");
+                    updateNotifyUIState(!!data.enabled, data.email || "", !!data.wechat_enabled);
                 }}
             }} catch (err) {{
                 console.error("获取通知配置异常:", err);
             }}
         }}
 
-        function updateNotifyUIState(enabled, email = null) {{
+        function updateNotifyUIState(enabled, email = null, wechatEnabled = null) {{
+            if (wechatEnabled !== null) document.getElementById("notifyWechatSwitch").checked = wechatEnabled;
             const sw = document.getElementById("notifySwitch");
             if (sw) sw.checked = enabled;
 
@@ -2031,13 +2055,14 @@ def render_dashboard(data: dict) -> str:
         async function sendTestNotification() {{
             const emailInp = document.getElementById("notifyEmailInput");
             const email = emailInp ? emailInp.value.trim() : "";
-            if (!email) {{
-                await customAlert("请先填写接收通知的邮箱地址后再测试！", "warning");
+            const wechatEnabled = document.getElementById("notifyWechatSwitch").checked;
+            if (!email && !wechatEnabled) {{
+                await customAlert("请填写邮箱或开启并绑定微信 bot 后再测试。", "warning");
                 if (emailInp) emailInp.focus();
                 return;
             }}
 
-            if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {{
+            if (email && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {{
                 await customAlert("邮箱格式不正确，请填写标准邮箱（例如: 123456@qq.com）！", "warning");
                 if (emailInp) emailInp.focus();
                 return;
@@ -2054,11 +2079,11 @@ def render_dashboard(data: dict) -> str:
                 const res = await fetch("/api/notify/test", {{
                     method: "POST",
                     headers: {{ "Content-Type": "application/json" }},
-                    body: JSON.stringify({{ email: email }})
+                    body: JSON.stringify({{ email: email, wechat_enabled: wechatEnabled }})
                 }});
                 const data = await res.json();
-                if (data.status === "ok") {{
-                    await customAlert(`测试邮件已发送至：${{email}}\\n\\n请检查收件箱或垃圾邮件。微信提醒取决于您的账号和通知设置。`, "success", "测试通知发送成功");
+                if (data.status === "ok" || data.status === "partial") {{
+                    await customAlert(data.info, data.status === "ok" ? "success" : "warning", "通知测试结果");
                 }} else {{
                     await customAlert(`测试通知发送失败：\\n${{data.message || '未知错误'}}`, "error", "发送测试失败");
                 }}
@@ -2078,8 +2103,9 @@ def render_dashboard(data: dict) -> str:
             const enabled = sw ? sw.checked : false;
             const email = emailInp ? emailInp.value.trim() : "";
 
-            if (enabled && !email) {{
-                await customAlert("开启通知后必须填写接收邮箱地址！", "warning");
+            const wechatEnabled = document.getElementById("notifyWechatSwitch").checked;
+            if (enabled && !email && !wechatEnabled) {{
+                await customAlert("请填写邮箱或开启微信 bot 通知。", "warning");
                 if (emailInp) emailInp.focus();
                 return;
             }}
@@ -2100,7 +2126,7 @@ def render_dashboard(data: dict) -> str:
                 const res = await fetch("/api/notify/config", {{
                     method: "POST",
                     headers: {{ "Content-Type": "application/json" }},
-                    body: JSON.stringify({{ enabled: enabled, email: email }})
+                    body: JSON.stringify({{ enabled: enabled, email: email, wechat_enabled: wechatEnabled }})
                 }});
                 const data = await res.json();
                 if (data.status === "ok") {{
@@ -2118,6 +2144,45 @@ def render_dashboard(data: dict) -> str:
                     btn.innerText = "保存设置";
                 }}
             }}
+        }}
+
+        async function fetchWechatStatus() {{
+            if (_wechatStatusPending) return;
+            _wechatStatusPending = true;
+            try {{
+                const res = await fetch("/api/notify/wechat/status");
+                const data = await res.json();
+                renderWechatStatus(data);
+            }} catch (err) {{
+                document.getElementById("wechatNotifyStatus").textContent = "微信状态加载失败，请稍后重试";
+            }} finally {{ _wechatStatusPending = false; }}
+        }}
+
+        function renderWechatStatus(data) {{
+            document.getElementById("wechatNotifyStatus").textContent = data.info || "尚未连接微信 bot";
+            const qr = document.getElementById("wechatNotifyQr");
+            const image = data.qr_image || "";
+            if (image.startsWith("data:image/png;base64,")) {{
+                if (qr.getAttribute("src") !== image) qr.src = image;
+                qr.style.display = "block";
+            }} else {{ qr.style.display = "none"; qr.removeAttribute("src"); }}
+            document.getElementById("wechatVerifyBox").style.display = data.phase === "need_verifycode" ? "block" : "none";
+        }}
+
+        async function wechatAction(action) {{
+            const buttons = document.querySelectorAll("#notifyModal button");
+            buttons.forEach(button => button.disabled = true);
+            try {{
+                const body = action === "verify" ? {{ code: document.getElementById("wechatVerifyCode").value.trim() }} : {{}};
+                const res = await fetch("/api/notify/wechat/" + action, {{
+                    method: "POST", headers: {{ "Content-Type": "application/json" }}, body: JSON.stringify(body)
+                }});
+                const data = await res.json();
+                if (!data.success) {{ await customAlert(data.info || "微信连接操作失败", "warning"); return; }}
+                if (action === "verify") document.getElementById("wechatVerifyCode").value = "";
+                renderWechatStatus(data);
+            }} catch (err) {{ await customAlert("微信连接操作失败，请稍后重试", "error"); }}
+            finally {{ buttons.forEach(button => button.disabled = false); }}
         }}
 
         let _allMyOrders = [];

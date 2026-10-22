@@ -214,8 +214,11 @@ class TestWebServer(unittest.TestCase):
         self.assertTrue(body["enabled"])
         self.assertEqual(body["email"], "user123@qq.com")
 
+    @patch("xdty_booking.web.server.load_config")
     @patch("xdty_booking.web.server.save_notify_config")
-    def test_handle_notify_config_post(self, mock_save):
+    def test_handle_notify_config_post(self, mock_save, mock_load):
+        from xdty_booking.config import AppConfig
+        mock_load.return_value = AppConfig()
         handler = GymStatusHandler.__new__(GymStatusHandler)
         handler._send_json = MagicMock()
 

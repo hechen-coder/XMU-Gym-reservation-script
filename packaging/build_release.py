@@ -50,7 +50,7 @@ def check_dependencies(obfuscate=True):
     if sys.version_info[:2] != (3, 8):
         raise RuntimeError("This release baseline requires Python 3.8; no automatic upgrade is performed")
     required = ["PyInstaller", "pyinstaller-hooks-contrib", "pywebview", "pythonnet", "ddddocr",
-                "onnxruntime", "Pillow", "numpy", "requests", "PyYAML", "rsa", "cryptography", "psutil"]
+                "onnxruntime", "Pillow", "numpy", "requests", "PyYAML", "rsa", "cryptography", "psutil", "qrcode", "pypng"]
     if obfuscate:
         required.append("pyarmor")
     versions = {}

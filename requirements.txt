@@ -7,3 +7,4 @@ psutil>=5.8.0
 pywebview>=5.0.0
 rsa>=4.9.0
 cryptography>=3.4.0
+qrcode>=7.3,<8.0
