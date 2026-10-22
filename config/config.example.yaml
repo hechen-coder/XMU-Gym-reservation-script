@@ -28,11 +28,15 @@ target:
 scheduler:
   target_time: "07:00:00"  # 每日开放抢票时刻 (24小时制，例如 07:00:00)
 
-# 4. 微信推送提醒（可选）
-# 抢票成功后微信自动发卡片通知提醒你。如不需要可直接留空。
-# 获取方法：微信扫码登录 https://www.pushplus.plus/ 复制 Token 填入下方：
+# 4. 通知提醒（可选；也可在网页“通知提醒”中设置）
+# 邮箱与微信 bot 可同时发送。微信需先在网页扫码连接并发一条消息完成绑定。
 notify:
-  pushplus_token: ""
+  enabled: false
+  channel: email
+  email:
+    to_addrs: []
+  wechat:
+    enabled: false
 
 # --------------------------------------------------------------
 # 💡 进阶提示：如需配置邮件 SMTP、Server酱、秒级抢票重试间隔等高级参数，

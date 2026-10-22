@@ -96,3 +96,11 @@ notify:
   bark:
     server_url: "https://api.day.app"
     device_key: ""
+
+  # 5. 微信 ClawBot：独立附加通道，可与上面所选 channel 共存。
+  # 在网页“通知提醒”中扫码连接，再用扫码账号发一条消息完成绑定。
+  wechat:
+    enabled: false
+    cred_path: "wechatbot-credentials.json"  # 相对本配置文件目录
+    state_path: "wechat_state.json"
+    send_timeout: 15

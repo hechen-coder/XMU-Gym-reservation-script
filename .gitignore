@@ -35,6 +35,8 @@ htmlcov/
 config/config.yaml
 config/auth_cookies.json
 config/session.json
+**/wechatbot-credentials.json
+**/wechat_state.json
 *.lock
 config/*.lock
 license.lic

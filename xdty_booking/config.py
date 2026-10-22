@@ -318,6 +318,21 @@ class FeishuConfig:
     secret: str = ""  # 机器人开启签名校验时填写
 
 @dataclass
+class WeChatConfig:
+    enabled: bool = False
+    cred_path: str = "wechatbot-credentials.json"
+    state_path: str = "wechat_state.json"
+    send_timeout: int = 15
+
+    def __post_init__(self):
+        if not isinstance(self.enabled, bool):
+            raise ValueError("wechat.enabled 必须是布尔值")
+        if isinstance(self.send_timeout, bool) or not isinstance(self.send_timeout, int) or not 1 <= self.send_timeout <= 60:
+            raise ValueError("wechat.send_timeout 必须为 1 至 60 秒")
+        if not all(isinstance(p, str) and p.strip() for p in (self.cred_path, self.state_path)):
+            raise ValueError("微信凭据和状态文件路径不能为空")
+
+@dataclass
 class NotifyConfig:
     enabled: bool = False
     channel: str = "email"  # email, pushplus, serverchan, bark, feishu, all
@@ -327,6 +342,8 @@ class NotifyConfig:
     serverchan: ServerChanConfig = field(default_factory=ServerChanConfig)
     bark: BarkConfig = field(default_factory=BarkConfig)
     feishu: FeishuConfig = field(default_factory=FeishuConfig)
+    # 微信作为独立附加通道，避免开启后意外启用 all 中的其他服务。
+    wechat: WeChatConfig = field(default_factory=WeChatConfig)
 
 @dataclass
 class AppConfig:
@@ -402,9 +419,18 @@ def load_config(config_path: str = "config/config.yaml") -> AppConfig:
     serverchan_cfg = _build_dataclass(ServerChanConfig, notify_data.get("serverchan"))
     bark_cfg = _build_dataclass(BarkConfig, notify_data.get("bark"))
     feishu_cfg = _build_dataclass(FeishuConfig, notify_data.get("feishu"))
+    wechat_raw = notify_data.get("wechat") or {}
+    if not isinstance(wechat_raw, dict):
+        raise ValueError("notify.wechat 必须是映射")
+    wechat_cfg = _build_dataclass(WeChatConfig, wechat_raw)
+    for attr in ("cred_path", "state_path"):
+        path = os.path.expanduser(getattr(wechat_cfg, attr))
+        if not os.path.isabs(path):
+            path = os.path.join(os.path.dirname(os.path.abspath(config_path)), path)
+        setattr(wechat_cfg, attr, os.path.abspath(path))
 
     notify_field_names = {f for f in NotifyConfig.__dataclass_fields__}
-    filtered_notify = {k: v for k, v in notify_data.items() if k in notify_field_names and k not in ("email", "pushplus", "serverchan", "bark", "feishu")}
+    filtered_notify = {k: v for k, v in notify_data.items() if k in notify_field_names and k not in ("email", "pushplus", "serverchan", "bark", "feishu", "wechat")}
     
     # 若用户未显式配置 enabled，但填写了任意推送 token 或接收邮箱，则自动启用通知
     if "enabled" not in filtered_notify:
@@ -413,7 +439,7 @@ def load_config(config_path: str = "config/config.yaml") -> AppConfig:
             email_cfg.to_addrs or
             serverchan_cfg.sendkey or
             bark_cfg.device_key or
-            feishu_cfg.webhook_url
+            feishu_cfg.webhook_url or wechat_cfg.enabled
         )
         filtered_notify["enabled"] = has_any_token
 
@@ -428,6 +454,7 @@ def load_config(config_path: str = "config/config.yaml") -> AppConfig:
         serverchan=serverchan_cfg,
         bark=bark_cfg,
         feishu=feishu_cfg,
+        wechat=wechat_cfg,
         **filtered_notify
     )
 
@@ -528,7 +555,8 @@ def save_notify_config(
     config_path: str,
     enabled: Optional[bool] = None,
     email: Optional[str] = None,
-    channel: Optional[str] = None
+    channel: Optional[str] = None,
+    wechat_enabled: Optional[bool] = None
 ) -> bool:
     """
     持久化回写通知配置 (通知总开关、接收邮箱、通知通道) 至 config.yaml
@@ -544,6 +572,12 @@ def save_notify_config(
             data["notify"]["enabled"] = bool(enabled)
         if channel is not None:
             data["notify"]["channel"] = str(channel).strip()
+        if wechat_enabled is not None:
+            if not isinstance(wechat_enabled, bool):
+                raise ValueError("wechat_enabled 必须是布尔值")
+            if not isinstance(data["notify"].get("wechat"), dict):
+                data["notify"]["wechat"] = {}
+            data["notify"]["wechat"]["enabled"] = wechat_enabled
         if email is not None:
             email_clean = str(email).strip()
             if "email" not in data["notify"] or not isinstance(data["notify"]["email"], dict):

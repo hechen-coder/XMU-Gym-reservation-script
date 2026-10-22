@@ -28,6 +28,8 @@ from xdty_booking.solver.captcha_solver import CaptchaSolver
 from xdty_booking.core.booking_engine import BookingEngine
 from xdty_booking.core.scheduler import BookingScheduler, next_scheduled_booking, planned_slots, slots_text
 from xdty_booking.notify.notifier import Notifier
+from xdty_booking.notify.wechat_binding import binding_for, close_bindings
+from xdty_booking.notify.wechat import WeChatError
 from xdty_booking.web.template import render_dashboard, render_qr_login_page
 from xdty_booking.utils.logger import setup_logger
 from cas_qr_login.cas_client import CasQrLoginClient
@@ -530,7 +532,8 @@ def query_gym_status(config_path: Optional[str] = None, auto_heal: bool = True) 
         "notify_config": {
             "enabled": cfg.notify.enabled,
             "channel": cfg.notify.channel,
-            "email": cfg.notify.email.to_addrs[0] if cfg.notify.email.to_addrs else ""
+            "email": cfg.notify.email.to_addrs[0] if cfg.notify.email.to_addrs else "",
+            "wechat_enabled": cfg.notify.wechat.enabled
         }
     }
 
@@ -766,6 +769,8 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             self._handle_notify_config_post(body_json, params)
         elif parsed.path.startswith("/api/notify/test"):
             self._handle_notify_test(body_json, params)
+        elif parsed.path.startswith("/api/notify/wechat/"):
+            self._handle_wechat_post(parsed.path.rsplit("/", 1)[-1], body_json)
         elif parsed.path.startswith("/api/orders/my") or parsed.path.startswith("/api/my_orders"):
             self._handle_my_orders()
         elif parsed.path == "/api/harvest":
@@ -1035,7 +1040,8 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                 "success": True,
                 "enabled": cfg.notify.enabled,
                 "channel": cfg.notify.channel,
-                "email": to_email
+                "email": to_email,
+                "wechat_enabled": cfg.notify.wechat.enabled
             })
         except Exception as e:
             logger.error(f"获取通知配置异常: {e}", exc_info=True)
@@ -1067,80 +1073,105 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             if channel is None and email:
                 channel = "email"
 
-            save_notify_config(c_path, enabled=enabled, email=email, channel=channel)
+            wechat_enabled = body_json.get("wechat_enabled")
+            if enabled is not None and not isinstance(enabled, bool):
+                raise ValueError("通知开关必须是布尔值")
+            if email is not None and (not isinstance(email, str) or len(email) > 254 or (email and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email))):
+                raise ValueError("邮箱格式不正确")
+            if channel is not None and channel not in ("email", "pushplus", "serverchan", "bark", "feishu", "all"):
+                raise ValueError("通知通道无效")
+            kwargs = dict(enabled=enabled, email=email, channel=channel)
+            if wechat_enabled is not None:
+                if not isinstance(wechat_enabled, bool):
+                    raise ValueError("微信开关必须是布尔值")
+                kwargs["wechat_enabled"] = wechat_enabled
+            save_notify_config(c_path, **kwargs)
             cfg = load_config(c_path)
             to_email = cfg.notify.email.to_addrs[0] if cfg.notify.email.to_addrs else ""
+            if wechat_enabled is not None or enabled is not None:
+                binding = binding_for(cfg.notify.wechat)
+                if cfg.notify.enabled and cfg.notify.wechat.enabled:
+                    try:
+                        binding.start()
+                    except WeChatError:
+                        pass  # A prior long poll may still be stopping; manual resume remains available.
+                else:
+                    binding.close()
             self._send_json(200, {
                 "status": "ok",
                 "success": True,
                 "enabled": cfg.notify.enabled,
                 "channel": cfg.notify.channel,
                 "email": to_email,
+                "wechat_enabled": cfg.notify.wechat.enabled,
                 "info": "通知设置已成功保存！"
             })
+        except ValueError as e:
+            self._send_json(400, {"success": False, "message": str(e)})
         except Exception as e:
             logger.error(f"保存通知配置异常: {e}", exc_info=True)
             self._send_json(500, {"status": "error", "success": False, "info": "通知设置保存失败，请稍后重试", "message": "通知设置保存失败，请稍后重试"})
 
     def _handle_notify_test(self, body_json: Optional[dict] = None, params: Optional[dict] = None):
         try:
-            c_path = _ensure_config_path(_GLOBAL_CONFIG_PATH)
-            cfg = load_config(c_path)
-
-            temp_email = None
-            if body_json and body_json.get("email"):
-                temp_email = str(body_json["email"]).strip()
-            elif params and params.get("email"):
-                temp_email = str(params["email"][0]).strip()
-
-            if temp_email:
-                cfg.notify.email.to_addrs = [temp_email]
+            cfg = load_config(_ensure_config_path(_GLOBAL_CONFIG_PATH))
+            body = body_json or {}
+            if "email" in body or (params and "email" in params):
+                email = body.get("email", (params or {}).get("email", [""])[0])
+                if not isinstance(email, str) or (email and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email)):
+                    raise ValueError("邮箱格式不正确")
+                cfg.notify.email.to_addrs = [email] if email else []
                 cfg.notify.channel = "email"
-                cfg.notify.enabled = True
-
-            if not cfg.notify.email.to_addrs:
-                self._send_json(400, {
-                    "status": "error",
-                    "success": False,
-                    "info": "请先填写接收通知的邮箱地址",
-                    "message": "请先填写接收通知的邮箱地址"
-                })
-                return
-
-            if not cfg.notify.email.sender:
-                from xdty_booking.config import (
-                    DEFAULT_DEVELOPER_EMAIL_SENDER,
-                    DEFAULT_DEVELOPER_EMAIL_AUTH,
-                    DEFAULT_DEVELOPER_SMTP_HOST,
-                    DEFAULT_DEVELOPER_SMTP_PORT,
-                    DEFAULT_DEVELOPER_SMTP_SSL
-                )
-                cfg.notify.email.sender = DEFAULT_DEVELOPER_EMAIL_SENDER
-                cfg.notify.email.password = DEFAULT_DEVELOPER_EMAIL_AUTH
-                cfg.notify.email.smtp_host = DEFAULT_DEVELOPER_SMTP_HOST
-                cfg.notify.email.smtp_port = DEFAULT_DEVELOPER_SMTP_PORT
-                cfg.notify.email.ssl = DEFAULT_DEVELOPER_SMTP_SSL
-
+            if "wechat_enabled" in body:
+                if not isinstance(body["wechat_enabled"], bool):
+                    raise ValueError("微信开关必须是布尔值")
+                cfg.notify.wechat.enabled = body["wechat_enabled"]
             cfg.notify.enabled = True
-            notifier = Notifier(cfg.notify)
-            results = notifier.send_test()
-            ok = results.get("email", False) or results.get("pushplus", False) or any(results.values())
-            if ok:
-                self._send_json(200, {
-                    "status": "ok",
-                    "success": True,
-                    "info": f"测试邮件已发送至 {cfg.notify.email.to_addrs[0]}，请检查收件箱或垃圾邮件。"
-                })
-            else:
-                self._send_json(500, {
-                    "status": "error",
-                    "success": False,
-                    "info": "❌ 发送测试通知失败，请检查网络或确认邮箱地址是否正确。",
-                    "message": "❌ 发送测试通知失败，请检查网络或确认邮箱地址是否正确。"
-                })
+            results = Notifier(cfg.notify).send_test()
+            labels = {"email": "邮箱", "wechat": "微信 bot", "pushplus": "PushPlus",
+                      "feishu": "飞书", "serverchan": "Server酱", "bark": "Bark"}
+            info = "；".join(f"{labels.get(k, k)}：{'已提交，请检查收件' if v else '发送失败'}" for k, v in results.items())
+            if not results:
+                info = "请填写邮箱或开启并绑定微信 bot"
+            complete = bool(results) and all(results.values())
+            partial = any(results.values()) and not complete
+            self._send_json(200, {"status": "ok" if complete else "partial" if partial else "error",
+                                  "success": complete, "results": results, "info": info, "message": info})
+        except ValueError as e:
+            self._send_json(400, {"success": False, "message": str(e)})
         except Exception as e:
-            logger.error(f"发送测试通知异常: {e}", exc_info=True)
-            self._send_json(500, {"status": "error", "success": False, "info": "测试邮件发送失败，请稍后重试", "message": "测试邮件发送失败，请稍后重试"})
+            logger.warning("测试通知失败 (%s)", type(e).__name__)
+            self._send_json(500, {"success": False, "message": "测试通知失败，请检查设置后重试"})
+
+    def _handle_wechat_status(self):
+        try:
+            cfg = load_config(_ensure_config_path(_GLOBAL_CONFIG_PATH))
+            self._send_json(200, {"success": True, **binding_for(cfg.notify.wechat).status()})
+        except Exception as e:
+            logger.warning("读取微信状态失败 (%s)", type(e).__name__)
+            self._send_json(500, {"success": False, "info": "微信状态读取失败"})
+
+    def _handle_wechat_post(self, action, body):
+        try:
+            cfg = load_config(_ensure_config_path(_GLOBAL_CONFIG_PATH))
+            binding = binding_for(cfg.notify.wechat)
+            if action == "login":
+                binding.start(login=True)
+            elif action == "resume":
+                binding.start()
+            elif action == "verify":
+                binding.verify(body.get("code"))
+            elif action == "disconnect":
+                binding.disconnect()
+            else:
+                self._send_json(404, {"success": False, "info": "接口不存在"})
+                return
+            self._send_json(200, {"success": True, **binding.status()})
+        except WeChatError as e:
+            self._send_json(400, {"success": False, "info": str(e)})
+        except Exception as e:
+            logger.warning("微信连接操作失败 (%s)", type(e).__name__)
+            self._send_json(500, {"success": False, "info": "微信连接操作失败，请重试"})
 
     def _handle_my_orders(self):
         try:
@@ -1403,6 +1434,9 @@ class GymStatusHandler(BaseHTTPRequestHandler):
         elif path.startswith("/api/notify/config"):
             self._handle_notify_config_get()
 
+        elif path == "/api/notify/wechat/status":
+            self._handle_wechat_status()
+
         # 查看我的预约记录 API
         elif path.startswith("/api/orders/my") or path.startswith("/api/my_orders"):
             self._handle_my_orders()
@@ -1481,6 +1515,7 @@ def create_web_service(port=8080, config_path="config/config.yaml", host="127.0.
         stopped.set()
         _scheduler_manager.stop()
         _snipe_manager.stop()
+        close_bindings()
         with monitor_lock:
             if monitor["session"]:
                 monitor["session"].stop()
@@ -1491,6 +1526,12 @@ def create_web_service(port=8080, config_path="config/config.yaml", host="127.0.
         with monitor_lock:
             if not stopped.is_set():
                 monitor["session"] = start_login_monitor(config_path)
+                try:
+                    cfg = load_config(_ensure_config_path(config_path))
+                    if cfg.notify.enabled and cfg.notify.wechat.enabled:
+                        binding_for(cfg.notify.wechat).start()
+                except Exception as e:
+                    logger.warning("微信通知监听启动失败 (%s)", type(e).__name__)
 
     service.start_monitor = lambda: threading.Thread(
         target=start_monitor, name="LoginMonitorBootstrap", daemon=True).start()

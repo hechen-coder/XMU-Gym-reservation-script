@@ -13,3 +13,5 @@ PyYAML==5.4.1
 rsa==4.9
 cryptography==3.4.7
 psutil==5.8.0
+qrcode==7.4.2
+pypng==0.20220715.0
