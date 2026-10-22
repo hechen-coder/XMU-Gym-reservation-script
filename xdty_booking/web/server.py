@@ -205,10 +205,11 @@ class SchedulerManager:
             self._target_time = cfg.scheduler.target_time or "07:00:00"
             self._stadium_name = cfg.target.stadium_name
             self._preferred_time = cfg.target.preferred_time
-            self._status_text = f"定时守护中：将在早 {self._target_time} 执行准点抢票"
+            self._status_text = "正在启动定时任务"
             self._last_result = None
             scheduler.next_booking = next_scheduled_booking(cfg, datetime.now())
             self._next_run_dt = scheduler.next_booking[0].strftime("%Y-%m-%d %H:%M:%S")
+            self._status_text = f"等待执行：{self._next_run_dt}"
             self._preferred_time = slots_text(scheduler.next_booking[2])
 
             def _status_cb(msg: str):
@@ -230,7 +231,7 @@ class SchedulerManager:
                 except Exception as e:
                     logger.error(f"后台定时预约异常: {e}", exc_info=True)
                     with self._lock:
-                        self._status_text = f"运行异常: {e}"
+                        self._status_text = "任务运行异常，请查看日志后重试"
                         self._is_running = False
 
             t = threading.Thread(target=_worker, daemon=True, name="BookingSchedulerWorker")
@@ -240,7 +241,7 @@ class SchedulerManager:
 
             return {
                 "success": True,
-                "info": f"定时预约已在后台启动，目标时刻: {self._next_run_dt}",
+                "info": f"定时预约已开启，下次执行：{self._next_run_dt}",
                 "status": self.get_status()
             }
 
@@ -264,7 +265,7 @@ class SnipeManager:
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._is_running = False
-        self._status_text = "未启动捡漏监听"
+        self._status_text = "余量监测未启动"
         self._target_date = ""
         self._preferred_time = ""
         self._stadium_name = ""
@@ -276,7 +277,7 @@ class SnipeManager:
             if self._is_running and self._thread and not self._thread.is_alive():
                 self._is_running = False
                 if not self._last_result and self._status_text.startswith("正在"):
-                    self._status_text = "捡漏监听已结束"
+                    self._status_text = "余量监测已结束"
             return {
                 "running": self._is_running,
                 "status_text": self._status_text,
@@ -297,7 +298,7 @@ class SnipeManager:
     ) -> Dict[str, Any]:
         with self._lock:
             if self._is_running and self._thread and self._thread.is_alive():
-                return {"success": False, "info": "捡漏监听任务已在运行中，请勿重复启动"}
+                return {"success": False, "info": "余量监测已在运行中，请勿重复启动"}
 
             c_path = _ensure_config_path(config_path)
             cfg = load_config(c_path)
@@ -328,7 +329,7 @@ class SnipeManager:
             self._target_date = target_date or engine.resolve_target_date()
             self._poll_count = 0
             self._last_result = None
-            self._status_text = f"正在监听 [{self._target_date} {self._preferred_time}] 退票名额..."
+            self._status_text = f"正在检查 [{self._target_date} {self._preferred_time}] 的空余名额..."
 
             def _status_cb(count: int, msg: str):
                 with self._lock:
@@ -349,13 +350,13 @@ class SnipeManager:
                         self._last_result = res
                         self._is_running = False
                         if isinstance(res, dict) and res.get("success"):
-                            self._status_text = f"🎉 捡漏成功: {res.get('info')}"
+                            self._status_text = f"预约成功：{res.get('info')}"
                         elif isinstance(res, dict) and res.get("info"):
-                            self._status_text = f"捡漏结束: {res.get('info')}"
+                            self._status_text = f"余量监测结束：{res.get('info')}"
                 except Exception as e:
                     logger.error(f"后台捡漏监听异常: {e}", exc_info=True)
                     with self._lock:
-                        self._status_text = f"运行异常: {e}"
+                        self._status_text = "任务运行异常，请查看日志后重试"
                         self._is_running = False
 
             t = threading.Thread(target=_worker, daemon=True, name="SnipeWorker")
@@ -365,18 +366,18 @@ class SnipeManager:
 
             return {
                 "success": True,
-                "info": f"已启动对 [{self._target_date} {self._preferred_time}] 的实时退票捡漏监听",
+                "info": f"已启动对 [{self._target_date} {self._preferred_time}] 的余量监测，发现名额后自动尝试预约",
                 "status": self.get_status()
             }
 
     def stop(self) -> Dict[str, Any]:
         with self._lock:
             if not self._is_running and (not self._thread or not self._thread.is_alive()):
-                return {"success": True, "info": "捡漏监听未在运行"}
+                return {"success": True, "info": "余量监测未在运行"}
             self._stop_event.set()
             self._is_running = False
-            self._status_text = "捡漏监听已手动停止"
-            return {"success": True, "info": "已成功停止捡漏监听任务"}
+            self._status_text = "余量监测已停止"
+            return {"success": True, "info": "余量监测已停止"}
 
 _snipe_manager = SnipeManager()
 
@@ -632,11 +633,11 @@ class GymStatusHandler(BaseHTTPRequestHandler):
     def _handle_set_token(self, params: Dict[str, Any]):
         token = params.get("token", [None])[0]
         if not token:
-            self._send_json(400, {"success": False, "info": "Token 不能为空"})
+            self._send_json(400, {"success": False, "info": "请填写登录凭证"})
             return
         token = str(token).strip()
         if not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", token):
-            self._send_json(400, {"success": False, "info": "Token 格式无效"})
+            self._send_json(400, {"success": False, "info": "登录凭证格式无效"})
             return
         try:
             c_path = _ensure_config_path(_GLOBAL_CONFIG_PATH)
@@ -647,14 +648,14 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             mgr = SessionManager(api, phpsessid=token)
             alive = mgr.check_alive()
             if not alive:
-                self._send_json(400, {"success": False, "alive": False, "info": "Token 校验未通过，原配置未修改"})
+                self._send_json(400, {"success": False, "alive": False, "info": "登录凭证验证未通过，原配置未修改"})
                 return
             save_phpsessid(c_path, token)
             self._send_json(200, {
                 "success": True,
                 "alive": alive,
                 "phpsessid": f"{token[:8]}***",
-                "info": "🎉 Token 保存成功且存活有效！"
+                "info": "登录凭证验证通过并已保存"
             })
         except Exception as e:
             logger.error("保存 Token 异常: %s", type(e).__name__)
@@ -679,12 +680,12 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                 self._send_json(200, {
                     "success": True,
                     "phpsessid": f"{new_token[:8]}***",
-                    "info": f"🎉 纯 HTTP 自动续登成功！最新 PHPSESSID: {new_token[:8]}*** 已生效并持久化。"
+                    "info": "已重新登录，可以继续预约"
                 })
             else:
                 self._send_json(200, {
                     "success": False,
-                    "info": "❌ checkLogin 纯 HTTP 续登未成功，可能长效 Token 已过期，请尝试微信小程序嗅探兜底。"
+                    "info": "自动重新登录未成功，请扫码登录或通过小程序登录"
                 })
         except Exception as e:
             logger.error("HTTP 自动续登异常: %s", type(e).__name__)
@@ -802,9 +803,9 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             if "用户名或者密码有误" in err_str or "非正常账号" in err_str or "用户名不存在" in err_str:
                 message = "用户名或密码错误，请核对后重试"
             elif "验证码" in err_str:
-                message = f"验证码识别或校验失败: {err_str}"
+                message = "验证码验证未通过，请重新登录"
             else:
-                message = f"登录失败: {err_str}"
+                message = "登录失败，请检查账号、密码或网络后重试"
             self._send_json(200, {"success": False, "logged_in": False, "error": message})
 
     def _handle_harvest(self):
@@ -826,7 +827,7 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             target = body_json.get("target") or {}
             scheduler = body_json.get("scheduler") or {}
             if not isinstance(target, dict) or not isinstance(scheduler, dict):
-                raise ValueError("目标与定时配置必须是映射")
+                raise ValueError("预约目标或定时设置格式无效")
 
             # 也支持扁平参数传入
             target_keys = ["stadium_id", "venue_id", "stadium_name", "area_name", "area_id", "preferred_time", "target_date_offset", "user_range"]
@@ -863,7 +864,7 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"success": False, "info": str(e)})
         except Exception as e:
             logger.error(f"保存定时配置异常: {e}", exc_info=True)
-            self._send_json(500, {"success": False, "info": str(e)})
+            self._send_json(500, {"success": False, "info": "定时设置保存失败，请稍后重试"})
 
     def _handle_scheduler_start(self, body_json: dict, params: dict):
         try:
@@ -882,7 +883,7 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"success": False, "info": str(e)})
         except Exception as e:
             logger.error(f"启动定时任务异常: {e}", exc_info=True)
-            self._send_json(500, {"success": False, "info": str(e)})
+            self._send_json(500, {"success": False, "info": "定时任务启动失败，请查看日志后重试"})
 
     def _handle_scheduler_stop(self):
         try:
@@ -890,7 +891,7 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             self._send_json(200, res)
         except Exception as e:
             logger.error(f"停止定时任务异常: {e}", exc_info=True)
-            self._send_json(500, {"success": False, "info": str(e)})
+            self._send_json(500, {"success": False, "info": "停止任务请求失败，请检查任务状态后重试"})
 
     def _handle_scheduler_config_get(self):
         try:
@@ -919,10 +920,10 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             })
         except Exception as e:
             logger.error(f"获取定时配置异常: {e}", exc_info=True)
-            self._send_json(500, {"success": False, "info": str(e)})
+            self._send_json(500, {"success": False, "info": "定时设置加载失败，请稍后重试"})
         except Exception as e:
             logger.error(f"获取定时配置异常: {e}", exc_info=True)
-            self._send_json(500, {"success": False, "info": str(e)})
+            self._send_json(500, {"success": False, "info": "定时设置加载失败，请稍后重试"})
 
     def _handle_scheduler_status(self):
         try:
@@ -930,7 +931,7 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"success": True, **status})
         except Exception as e:
             logger.error(f"获取定时任务状态异常: {e}", exc_info=True)
-            self._send_json(500, {"success": False, "info": str(e)})
+            self._send_json(500, {"success": False, "info": "任务状态加载失败，请稍后刷新"})
 
     def _handle_snipe_status(self):
         try:
@@ -938,7 +939,7 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"success": True, **status})
         except Exception as e:
             logger.error(f"获取捡漏任务状态异常: {e}", exc_info=True)
-            self._send_json(500, {"success": False, "info": str(e)})
+            self._send_json(500, {"success": False, "info": "监测状态加载失败，请稍后刷新"})
 
     def _handle_snipe_start(self, body_json: dict, params: dict):
         try:
@@ -953,9 +954,9 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                 from xdty_booking.config import SchedulerConfig
                 SchedulerConfig._check_slot(preferred_time)
             if not math.isfinite(poll_interval) or not 1.0 <= poll_interval <= 60.0:
-                raise ValueError("捡漏轮询间隔须在 1 到 60 秒之间")
+                raise ValueError("检查间隔须在 1 到 60 秒之间")
             if not isinstance(fallback_nearest, bool):
-                raise ValueError("就近降级参数必须是布尔值")
+                raise ValueError("请选择是否允许尝试相邻时段")
 
             res = _snipe_manager.start(
                 config_path=c_path,
@@ -1043,7 +1044,7 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                 "enabled": False,
                 "channel": "email",
                 "email": "",
-                "info": str(e)
+                "info": "通知设置加载失败，请稍后重试"
             })
 
     def _handle_notify_config_post(self, body_json: Optional[dict] = None, params: Optional[dict] = None):
@@ -1078,7 +1079,7 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             })
         except Exception as e:
             logger.error(f"保存通知配置异常: {e}", exc_info=True)
-            self._send_json(500, {"status": "error", "success": False, "info": str(e), "message": str(e)})
+            self._send_json(500, {"status": "error", "success": False, "info": "通知设置保存失败，请稍后重试", "message": "通知设置保存失败，请稍后重试"})
 
     def _handle_notify_test(self, body_json: Optional[dict] = None, params: Optional[dict] = None):
         try:
@@ -1100,8 +1101,8 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                 self._send_json(400, {
                     "status": "error",
                     "success": False,
-                    "info": "请先输入接收通知的 QQ 邮箱地址！",
-                    "message": "请先输入接收通知的 QQ 邮箱地址！"
+                    "info": "请先填写接收通知的邮箱地址",
+                    "message": "请先填写接收通知的邮箱地址"
                 })
                 return
 
@@ -1127,7 +1128,7 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                 self._send_json(200, {
                     "status": "ok",
                     "success": True,
-                    "info": f"🎉 测试通知已成功投递至 {cfg.notify.email.to_addrs[0]}！请检查邮箱收信及手机微信【QQ邮箱提醒】大卡片。"
+                    "info": f"测试邮件已发送至 {cfg.notify.email.to_addrs[0]}，请检查收件箱或垃圾邮件。"
                 })
             else:
                 self._send_json(500, {
@@ -1138,7 +1139,7 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                 })
         except Exception as e:
             logger.error(f"发送测试通知异常: {e}", exc_info=True)
-            self._send_json(500, {"status": "error", "success": False, "info": f"测试发送异常: {e}", "message": str(e)})
+            self._send_json(500, {"status": "error", "success": False, "info": "测试邮件发送失败，请稍后重试", "message": "测试邮件发送失败，请稍后重试"})
 
     def _handle_my_orders(self):
         try:
@@ -1210,7 +1211,7 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             self._send_json(200, {
                 "status": "error",
                 "success": False,
-                "info": f"查询我的预约异常: {e}",
+                "info": "获取预约记录失败，请稍后重试",
                 "orders": []
             })
 
@@ -1231,7 +1232,7 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                 }
             except Exception as e:
                 logger.error(f"初始化二维码失败: {e}", exc_info=True)
-                data = {"success": False, "error": str(e)}
+                data = {"success": False, "error": "登录二维码加载失败，请稍后重试"}
         self._send_json(200, data)
 
     def _handle_qr_status(self):
@@ -1247,14 +1248,14 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             elif _has_login_failed:
                 data = {
                     "code": "error",
-                    "desc": "凭证置换异常，请点击刷新重新扫码",
+                    "desc": "登录未完成，请刷新二维码后重试",
                     "logged_in": False,
                     "data": None
                 }
             elif _cas_client is None:
                 data = {
                     "code": "-1",
-                    "desc": "会话尚未初始化，请刷新",
+                    "desc": "请先刷新二维码，再扫码登录",
                     "logged_in": False,
                     "data": None
                 }
@@ -1287,7 +1288,7 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                         logger.error(f"换发登录凭据异常: {e}", exc_info=True)
                         _qr_login_result = None
                         _has_login_failed = True
-                        desc = f"凭据换发异常: {e}"
+                        desc = "登录未完成，请刷新二维码后重试"
 
                 data = {
                     "code": code,

@@ -346,7 +346,7 @@ class BookingEngine:
                 f"⚡ 自动降级尝试就近时段: {c_group.time_range} ({c_slot.area_name}), "
                 f"剩余: {c_slot.remaining_capacity}人 (已约 {c_slot.selected}/{c_slot.max_count})..."
             )
-            fallback_res = self._submit_slot(c_slot, c_group, mode=f"{mode}(降级:{c_group.time_range})")
+            fallback_res = self._submit_slot(c_slot, c_group, mode=f"{mode}（相邻时段：{c_group.time_range}）")
             if fallback_res.get("success"):
                 fallback_res["fallback"] = True
                 return fallback_res
@@ -381,11 +381,11 @@ class BookingEngine:
         while time.time() - start_time < max_duration_seconds:
             if stop_event and stop_event.is_set():
                 logger.info("🛑 接收到终止信号，退出捡漏监听模式")
-                return {"success": False, "info": "捡漏监听已手动停止"}
+                return {"success": False, "info": "余量监测已停止"}
 
             attempt += 1
             if status_callback:
-                status_callback(attempt, f"第 {attempt} 次检测：正在探测退票名额...")
+                status_callback(attempt, f"第 {attempt} 次检查：正在查询空余名额...")
 
             res = self.execute_booking(
                 target_date=target_date,
@@ -393,12 +393,12 @@ class BookingEngine:
                 interval_id=interval_id,
                 check_availability=True,
                 fallback_nearest=fallback_nearest,
-                mode="捡漏秒杀"
+                mode="余量监测预约"
             )
             if res.get("success"):
                 logger.info(f"🎉 捡漏成功！已完成预约: {res.get('info')}")
                 if status_callback:
-                    status_callback(attempt, f"🎉 捡漏成功: {res.get('info')}")
+                    status_callback(attempt, f"预约成功：{res.get('info')}")
                 return res
 
             if res.get("skipped"):
@@ -422,7 +422,7 @@ class BookingEngine:
                             logger.info("✅ 捡漏监听 Session 自愈成功，继续监听！")
                             if stop_event:
                                 if stop_event.wait(poll_interval):
-                                    return {"success": False, "info": "捡漏监听已手动停止"}
+                                    return {"success": False, "info": "余量监测已停止"}
                             else:
                                 time.sleep(poll_interval)
                             continue
@@ -438,8 +438,8 @@ class BookingEngine:
 
             if stop_event:
                 if stop_event.wait(poll_interval + jitter):
-                    return {"success": False, "info": "捡漏监听已手动停止"}
+                    return {"success": False, "info": "余量监测已停止"}
             else:
                 time.sleep(poll_interval + jitter)
 
-        return {"success": False, "info": "捡漏监听超时，未能在规定时间内检测到空余名额"}
+        return {"success": False, "info": "余量监测已结束，期间未完成预约"}

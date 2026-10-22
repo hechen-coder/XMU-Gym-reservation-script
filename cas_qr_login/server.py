@@ -34,7 +34,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>厦门大学统一身份认证 · 扫码登录探究平台</title>
+    <title>体育馆预约助手 · 扫码登录</title>
     <style>
         :root {
             --primary: #0f4c81;
@@ -289,8 +289,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
     <div class="container">
         <div class="header">
-            <h1>厦门大学统一身份认证</h1>
-            <p>纯 Python 模拟企业微信扫码登录 · 凭证自动提取闭环</p>
+            <h1>体育馆预约助手</h1>
+            <p>使用企业微信扫码完成登录</p>
         </div>
         <div class="content">
             <!-- 二维码区 -->
@@ -306,7 +306,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
             <p class="tips" id="instructionTip">
                 请打开手机上的 <strong>企业微信 APP</strong>，点击右上角【+】→【扫一扫】扫描上方二维码。<br>
-                扫码后请在手机上点击<strong>【确认登录】</strong>，系统将自动完成票据交换与 Token 提取。
+                扫码后请在手机上点击<strong>【确认登录】</strong>，登录完成后可进入预约大厅。
             </p>
 
             <button class="refresh-btn" id="refreshBtn" onclick="refreshQr()" style="display: none;">
@@ -316,7 +316,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             <!-- 成功结果区 -->
             <div class="result-panel" id="resultPanel">
                 <div class="token-card">
-                    <div class="token-title">🎉 成功换取最新 PHPSESSID</div>
+                    <div class="token-title">登录凭证（PHPSESSID）</div>
                     <div class="token-value-box">
                         <span id="phpsessidVal">---</span>
                         <button class="copy-btn" onclick="copyToken()">复制</button>
@@ -324,7 +324,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 </div>
 
                 <div class="token-card">
-                    <div class="token-title">📋 嗅探到的长效 auth_params 授权参数</div>
+                    <div class="token-title">登录参数（诊断信息）</div>
                     <table class="params-table" id="paramsTable">
                         <tbody></tbody>
                     </table>
@@ -332,7 +332,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
                 <div style="display: flex; gap: 12px; margin-top: 12px; flex-wrap: wrap;">
                     <button class="save-btn" id="saveBtn" onclick="saveToConfig()" style="flex: 1; margin-top: 0;">
-                        💾 持久化至 config.yaml
+                        💾 保存登录信息
                     </button>
                     <a href="/dashboard" class="save-btn" id="enterBtn" style="flex: 1; margin-top: 0; text-align: center; text-decoration: none; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);">
                         🏋️ 进入体育馆查询与预约大厅 →
@@ -361,7 +361,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             document.getElementById("qrBox").style.display = "flex";
             document.getElementById("instructionTip").style.display = "block";
             document.getElementById("refreshBtn").style.display = "none";
-            updateStatus("scanning", "正在向统一认证中心申请 UUID...");
+            updateStatus("scanning", "正在加载登录二维码...");
 
             try {
                 const res = await fetch("/api/qr", {method: "POST", headers: {"Content-Type": "application/json"}});
@@ -375,7 +375,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     document.getElementById("refreshBtn").style.display = "inline-block";
                 }
             } catch (err) {
-                updateStatus("expired", "连接服务器异常: " + err.message);
+                updateStatus("expired", "连接失败，请检查网络后重试");
                 document.getElementById("refreshBtn").style.display = "inline-block";
             }
         }
@@ -407,7 +407,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                         if (data.logged_in && data.data) {
                             handleSuccess(data.data);
                         } else {
-                            updateStatus("success", data.desc || "授权成功！正在换取 Token...");
+                            updateStatus("success", data.desc || "扫码已确认，正在完成登录...");
                         }
                     } else if (data.code === "3") {
                         updateStatus("expired", "二维码已过期失效");
@@ -427,7 +427,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         function handleSuccess(resData) {
             isCompleted = true;
             clearInterval(pollTimer);
-            updateStatus("success", "🎉 登录成功！所有凭据已成功提取与验证");
+            updateStatus("success", "登录成功，可以进入预约大厅");
             
             document.getElementById("qrBox").style.display = "none";
             document.getElementById("instructionTip").style.display = "none";
@@ -444,7 +444,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 "student_num": "学号 (student_num)",
                 "card_id": "一卡通号 (card_id)",
                 "uid": "用户 ID (uid)",
-                "token": "长效 Token",
+                "token": "认证参数 Token",
                 "sign": "校验签名 (sign)",
                 "school_id": "高校编号 (school_id)",
                 "login_type": "登录类型 (login_type)",
@@ -465,7 +465,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             // 存活状态
             if (resData.user_info) {
                 const row = document.createElement("tr");
-                row.insertCell().textContent = "会话在线存活探测";
+                row.insertCell().textContent = "登录状态";
                 const value = row.insertCell();
                 value.style.color = "#10b981";
                 value.style.fontWeight = "bold";
@@ -474,7 +474,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             }
 
             document.getElementById("resultPanel").style.display = "block";
-            showToast("🎉 登录成功！凭据已捕获");
+            showToast("登录成功");
 
             // 自动保存配置
             setTimeout(saveToConfig, 300);
@@ -483,7 +483,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         function copyToken() {
             const val = document.getElementById("phpsessidVal").innerText;
             navigator.clipboard.writeText(val).then(() => {
-                showToast("✅ PHPSESSID 已复制到剪贴板！");
+                showToast("登录凭证已复制");
             });
         }
 
@@ -496,7 +496,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 const res = await fetch("/api/save_config", { method: "POST", headers: {"Content-Type": "application/json"} });
                 const d = await res.json();
                 if (d.success) {
-                    showToast("💾 已成功写入 config/config.yaml！");
+                    showToast("登录信息已保存");
                     btn.innerText = "✅ 已成功持久化至配置文件";
                     btn.style.background = "#059669";
                 } else {
@@ -505,7 +505,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     btn.innerText = "💾 重试保存到 config.yaml";
                 }
             } catch (err) {
-                showToast("❌ 保存异常: " + err.message);
+                showToast("保存失败，请稍后重试");
                 btn.disabled = false;
                 btn.innerText = "💾 重试保存到 config.yaml";
             }
@@ -570,7 +570,7 @@ class CasQrRequestHandler(http.server.SimpleHTTPRequestHandler):
             if login_result:
                 data = {"code": "1", "desc": "登录成功！", "logged_in": True, "data": login_result}
             elif has_login_failed:
-                data = {"code": "error", "desc": "凭证置换异常，请刷新二维码重试", "logged_in": False, "data": None}
+                data = {"code": "error", "desc": "登录未完成，请刷新二维码后重试", "logged_in": False, "data": None}
             else:
                 code, desc = cas_client.check_status()
                 logged_in = False
@@ -584,7 +584,7 @@ class CasQrRequestHandler(http.server.SimpleHTTPRequestHandler):
                         logger.error("换发登录凭据异常: %s", type(e).__name__)
                         login_result = None
                         has_login_failed = True
-                        desc = "凭据换发异常，请刷新二维码重试"
+                        desc = "登录未完成，请刷新二维码后重试"
                 data = {"code": code, "desc": desc, "logged_in": logged_in, "data": login_result}
         self._json(200, data)
 

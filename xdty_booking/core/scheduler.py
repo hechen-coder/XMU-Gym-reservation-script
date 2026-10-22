@@ -311,7 +311,7 @@ class BookingScheduler:
                         logger.info(f"⏳ 静默守护中... 距离预检自愈还有 {int(wait_secs // 60)} 分钟 (目标预检时刻: {pre_check_dt.strftime('%H:%M:%S')})")
                         last_report_time = time.time()
                     if self.status_callback:
-                        self.status_callback(f"静默休眠中，将在 {pre_check_dt.strftime('%H:%M:%S')} 进行预检自愈 (距抢票 {int((target_ts - datetime.now().timestamp()) // 60)} 分钟)")
+                        self.status_callback(f"等待执行，将于 {pre_check_dt.strftime('%H:%M:%S')} 检查登录状态（距执行约 {int((target_ts - datetime.now().timestamp()) // 60)} 分钟）")
                     sleep_step = min(10.0, max(0.5, wait_secs))
                     if self._stop_event.wait(sleep_step):
                         return {"success": False, "info": "定时任务已被手动终止"}
@@ -325,14 +325,14 @@ class BookingScheduler:
             # 2. 到达预检时刻：仅在此刻全面执行 Session 存活探测与失效自愈 (此时捕获的凭证最新鲜有效)
             logger.info(f"🔍 到达抢票前预检时刻 ({datetime.now().strftime('%H:%M:%S')})，检查凭证有效性...")
             if self.status_callback:
-                self.status_callback("到达抢票前预检时刻，正在检查并自愈 Session 凭据...")
+                self.status_callback("正在检查登录状态，必要时尝试重新登录...")
             valid = self.ensure_valid_session()
             if not valid:
                 logger.error("⚠️ 提前预检自愈未成功，抢票将按当前状态继续尝试")
                 self._notify(title=f"预检登录失败 {visit_date} {slots_text(preferred_times, brief=True)}",
                              content=self._plan_context(visit_date, preferred_times)
-                             + f"账号密码重新登录与会话续登均失败，{target_dt.strftime('%H:%M')} 抢票大概率失败。\n"
-                             "请立即打开控制台登录页手动登录，服务会在开抢时自动采用新凭据。")
+                             + f"自动重新登录未成功，{target_dt.strftime('%H:%M')} 的预约任务可能无法完成。\n"
+                             "请打开登录页手动登录，任务执行时会使用更新后的登录信息。")
 
             # 3. 冲刺等待期：在准点前 30 秒进行高精度服务端毫秒时间差校准
             while (target_ts - datetime.now().timestamp()) > 35.0:
@@ -344,14 +344,14 @@ class BookingScheduler:
 
             logger.info("正在与厦大体育馆服务器校准高精度时间差...")
             if self.status_callback:
-                self.status_callback("正在与厦大体育馆服务器进行毫秒级高精度对时...")
+                self.status_callback("正在校准执行时间...")
             time_offset = TimeSync.get_server_time_offset(self.cfg.base_url)
 
             # 4. 高精度等待直至准点时刻 (提前 advance_ms 毫秒)
             remaining = target_ts - datetime.now().timestamp()
             logger.info(f"距离准点放票还剩 {remaining:.2f} 秒，进入毫秒级高精度等待...")
             if self.status_callback:
-                self.status_callback(f"距离放票还剩 {remaining:.1f} 秒，进入突发就绪状态...")
+                self.status_callback(f"距离执行还有 {max(0, remaining):.1f} 秒，正在等待提交...")
             TimeSync.wait_until(target_ts, offset=time_offset, advance_ms=self.cfg.scheduler.advance_ms)
 
             if self._stop_event.is_set():
@@ -362,7 +362,7 @@ class BookingScheduler:
             # 5. 准点瞬间：极速并发抢票！
             logger.info(f"⚡ [准点] {datetime.now().strftime('%H:%M:%S')} 到达放号时刻！立即执行极速抢票！")
             if self.status_callback:
-                self.status_callback("⚡ 到达放票时刻！正在极速提交预约订单...")
+                self.status_callback("正在提交预约...")
             engine = BookingEngine(
                 api=self.api,
                 captcha_solver=self.solver,
@@ -384,7 +384,7 @@ class BookingScheduler:
                         target_date=visit_date,
                         preferred_time=slot_time,
                         fallback_nearest=False if self.cfg.scheduler.weekly_enabled else self.cfg.scheduler.fallback_nearest,
-                        mode="早7点准点抢票" if len(preferred_times) == 1 else f"早7点准点抢票(优先级{preferred_times.index(slot_time) + 1})"
+                        mode="定时预约" if len(preferred_times) == 1 else f"定时预约（优先级 {preferred_times.index(slot_time) + 1}）"
                     )
                     if res.get("success"):
                         break
@@ -406,7 +406,7 @@ class BookingScheduler:
             if res.get("success"):
                 logger.info(f"🎉 准点抢票大获全胜: {res.get('info')}")
                 if self.status_callback:
-                    self.status_callback(f"🎉 准点抢票成功！{res.get('info')}")
+                    self.status_callback(f"预约成功：{res.get('info')}")
             elif all(r.get("reason") == "course_occupied" for r in results.values()):
                 message = (self._plan_context(visit_date, preferred_times) + detail
                            + "当天不再预约，也不改约计划外的其他时段。" + tail)
@@ -425,7 +425,7 @@ class BookingScheduler:
             else:
                 logger.error(f"准点抢票结果: {res.get('info')}")
                 if self.status_callback:
-                    self.status_callback(f"⚠️ 准点抢票结束: {res.get('info')}")
+                    self.status_callback(f"本次预约尝试结束：{res.get('info')}")
                 kind = classify_failure(res)
                 res["notification"] = self._notify(
                     title=f"{kind} {visit_date} {slots_text(preferred_times, brief=True)}",

@@ -22,12 +22,12 @@ def render_dashboard(data: dict) -> str:
     expire_at = _html(auth_status.get("expire_at", ""))
 
     if is_dev:
-        license_badge = '<span class="status-pill" style="background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; cursor: pointer;" onclick="openLicenseModal()" title="源码开发调试环境 · 免密运行">🛠️ 开发免密版</span>'
+        license_badge = '<span class="status-pill" style="background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; cursor: pointer;" onclick="openLicenseModal()" title="源码开发环境">🛠️ 开发模式</span>'
     elif is_licensed:
         exp_short = expire_at[:10] if expire_at else "永久"
-        license_badge = f'<span class="status-pill ok" style="cursor: pointer;" onclick="openLicenseModal()" title="已成功激活 (有效期至: {expire_at})">🛡️ 已授权 ({exp_short})</span>'
+        license_badge = f'<span class="status-pill ok" style="cursor: pointer;" onclick="openLicenseModal()" title="已激活（有效期至：{expire_at}）">🛡️ 已激活 · {"永久" if not expire_at else "有效期至 " + exp_short}</span>'
     else:
-        license_badge = '<span class="status-pill warn" style="background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; cursor: pointer; font-weight: 700; animation: pulse 2s infinite;" onclick="openLicenseModal()" title="尚未激活，点击输入激活码">🔒 未激活 (点击激活)</span>'
+        license_badge = '<span class="status-pill warn" style="background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; cursor: pointer; font-weight: 700; animation: pulse 2s infinite;" onclick="openLicenseModal()" title="尚未激活，点击输入激活码">🔒 未激活</span>'
 
     license_modal_display = "flex" if (not is_licensed and not is_dev) else "none"
 
@@ -97,7 +97,7 @@ def render_dashboard(data: dict) -> str:
         + "".join(
             f'<input id="weeklyDay{day}_{i + 1}" class="form-input" list="weeklyTimeOptions" '
             f'aria-label="{name}第 {i + 1} 优先级预约时段" '
-            f'placeholder="{"不预约（留空）" if i == 0 else f"备选 {i + 1}（可选）"}" '
+            f'placeholder="{"不预约（留空）" if i == 0 else f"备选 {i}（可选）"}" '
             f'value="{_html(_slot_at(weekly_plan.get(str(day)), i))}">'
             for i in range(MAX_PRIORITY_SLOTS))
         for day, name in enumerate(["周一", "周二", "周三", "周四", "周五", "周六", "周日"], 1)
@@ -106,11 +106,11 @@ def render_dashboard(data: dict) -> str:
     override_row_style = f"display: grid; grid-template-columns: minmax(0, 1fr) repeat({MAX_PRIORITY_SLOTS}, minmax(0, 1fr)) 32px; gap: 8px; margin-bottom: 6px;"
     override_rows_html = "".join(
         f'<div class="override-row" style="{override_row_style}">'
-        f'<input type="date" class="form-input override-date" aria-label="特例入场日期" value="{_html(day)}">'
+        f'<input type="date" class="form-input override-date" aria-label="指定入场日期" value="{_html(day)}">'
         + "".join(
             f'<input class="form-input override-slot" list="weeklyTimeOptions" '
-            f'aria-label="特例第 {i + 1} 优先级时段" '
-            f'placeholder="{"16:30-18:00" if i == 0 else f"备选 {i + 1}（可选）"}" '
+            f'aria-label="指定日期第 {i + 1} 优先级时段" '
+            f'placeholder="{"16:30-18:00" if i == 0 else f"备选 {i}（可选）"}" '
             f'value="{_html(_slot_at(slots, i))}">'
             for i in range(MAX_PRIORITY_SLOTS))
         + '<button type="button" class="btn-action" title="删除" onclick="this.parentElement.remove()">🗑️</button></div>'
@@ -128,9 +128,9 @@ def render_dashboard(data: dict) -> str:
                 <button type="button" class="btn-action" onclick="location.reload()" title="刷新当前场地余量">
                     🔄 刷新
                 </button>
-                <label class="auto-refresh-box" title="每 30 秒自动刷新余量与会话保活">
+                <label class="auto-refresh-box" title="每 30 秒刷新场次余量并检查登录状态">
                     <input type="checkbox" id="autoRefreshToggle" onchange="toggleAutoRefresh(this.checked)" style="cursor: pointer;">
-                    <span>自动刷新(30s)</span>
+                    <span>每 30 秒刷新</span>
                 </label>
                 <a href="/login" class="btn-link" title="重新扫码登录或切换账号">
                     重新登录
@@ -175,7 +175,7 @@ def render_dashboard(data: dict) -> str:
                 progress_html = f'<div class="progress-fill" style="width: {pct}%; background: {bar_color};"></div>'
                 btn_html = (f'<button class="btn-book" data-interval-id="{_html(s.get("interval_id"))}" '
                             f'data-date="{_html(g.get("date"))}" data-time-range="{_html(g.get("time_range"))}" '
-                            'onclick="bookSlot(this.dataset.intervalId, this.dataset.date, this.dataset.timeRange, this)">⚡ 立刻预约</button>')
+                            'onclick="bookSlot(this.dataset.intervalId, this.dataset.date, this.dataset.timeRange, this)">⚡ 立即预约</button>')
             else:
                 avail_cls = "full"
                 badge_text = "已约满"
@@ -223,7 +223,7 @@ def render_dashboard(data: dict) -> str:
                         请先登录以查看场地与预约
                     </div>
                     <div style="font-size: 13px; color: #64748b; margin-bottom: 20px; line-height: 1.5;">
-                        当前登录凭证已失效或未登录，请使用手机【企业微信】扫码或账号密码直接登录
+                        当前未登录或登录已过期，请使用企业微信扫码或账号密码登录
                     </div>
 
                     <!-- 居中内嵌二维码 -->
@@ -232,7 +232,7 @@ def render_dashboard(data: dict) -> str:
                             <img id="inlineQrImg" src="" alt="二维码加载中..." style="width: 100%; height: 100%; object-fit: contain; border-radius: 6px;">
                         </div>
                         <div id="inlineQrStatus" style="font-size: 13px; color: #0284c7; margin-top: 10px; font-weight: 500;">
-                            正在向认证中心拉取二维码...
+                            正在加载登录二维码...
                         </div>
                         <button id="inlineRefreshBtn" onclick="initInlineQr()" style="display: none; margin-top: 8px; font-size: 12px; padding: 5px 14px; border-radius: 6px; border: 1px solid #cbd5e1; background: #f8fafc; cursor: pointer;">
                             🔄 刷新二维码
@@ -241,7 +241,7 @@ def render_dashboard(data: dict) -> str:
 
                     <div style="display: flex; justify-content: center; gap: 10px;">
                         <a href="/login" class="btn-action btn-primary" style="padding: 10px 24px; font-size: 14px; font-weight: 600; text-decoration: none; border-radius: 8px;">
-                            📱 全屏扫码页面
+                            📱 打开登录页
                         </a>
                     </div>
 
@@ -253,7 +253,7 @@ def render_dashboard(data: dict) -> str:
                         <input name="password" id="inlinePwPass" type="password" placeholder="密码" autocomplete="current-password" required
                                style="width: 100%; box-sizing: border-box; padding: 9px 12px; margin-bottom: 8px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px;">
                         <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #475569; margin-bottom: 10px; cursor: pointer;">
-                            <input type="checkbox" id="inlinePwRemember" checked style="cursor: pointer;"> 保存账号密码，登录失效时自动重新登录
+                            <input type="checkbox" id="inlinePwRemember" checked style="cursor: pointer;"> 在本机保存账号密码，用于自动重新登录
                         </label>
                         <button type="submit" class="btn-action btn-primary" id="inlinePwBtn" style="width: 100%; margin-top: 0; padding: 10px; font-size: 14px; font-weight: 600; border-radius: 8px; cursor: pointer;">
                             🔑 账号密码登录
@@ -263,16 +263,16 @@ def render_dashboard(data: dict) -> str:
 
                     <!-- 更多选项折叠（避免干扰普通使用者） -->
                     <details style="margin-top: 24px; border-top: 1px dashed #e2e8f0; padding-top: 14px; text-align: center;">
-                        <summary style="font-size: 12px; color: #94a3b8; cursor: pointer; user-select: none;">🛠️ 更多选项 ▾</summary>
+                        <summary style="font-size: 12px; color: #94a3b8; cursor: pointer; user-select: none;">🛠️ 其他登录方式 ▾</summary>
                         <div style="display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin-top: 12px;">
-                            <button class="btn-action btn-success" onclick="reloginSession()" style="font-size: 12px; padding: 6px 14px;" title="使用已有凭据快速换票">
-                                ⚡ HTTP 自动续登
+                            <button class="btn-action btn-success" onclick="reloginSession()" style="font-size: 12px; padding: 6px 14px;" title="使用已保存的登录信息尝试重新登录">
+                                ⚡ 尝试重新登录
                             </button>
                             <button class="btn-action" onclick="harvestSession()" style="font-size: 12px; padding: 6px 14px;" title="通过桌面快捷方式启动微信小程序完成登录">
-                                🔑 手动登录
+                                🔑 小程序登录
                             </button>
-                            <button class="btn-action" onclick="setManualToken()" style="font-size: 12px; padding: 6px 14px;" title="手动粘贴凭据">
-                                ✏️ 手动输入 Token
+                            <button class="btn-action" onclick="setManualToken()" style="font-size: 12px; padding: 6px 14px;" title="手动填写登录凭证">
+                                ✏️ 手动填写登录凭证
                             </button>
                         </div>
                     </details>
@@ -286,7 +286,7 @@ def render_dashboard(data: dict) -> str:
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{stadium_name} - 实时空位监控与极速预约</title>
+    <title>{stadium_name} - 场次查询与预约</title>
     <style>
         :root {{
             --primary: #2563eb;
@@ -1095,7 +1095,7 @@ def render_dashboard(data: dict) -> str:
                         </button>
                     </div>
                 </div>
-                <p class="subtitle">{area_name} · 实时数据直连 · 点击右侧立即预约</p>
+                <p class="subtitle">{area_name} · 查看可预约场次，选择时段后提交预约</p>
             </div>
             <div class="status-bar">
                 <div class="status-group">
@@ -1106,30 +1106,30 @@ def render_dashboard(data: dict) -> str:
             </div>
         </div>
 
-        <!-- 下一栏：功能专属栏（定时预约 与 捡漏监听） -->
+        <!-- 下一栏：功能专属栏（定时预约 与 余量监测） -->
         <div class="feature-bar">
             <div class="feature-left">
                 <span class="feature-title">⚡ 自动化功能</span>
                 <!-- 定时预约按钮：未运行时展示常规按钮，运行时展示高亮活动状态 -->
-                <button type="button" class="btn-feature" id="featureSchedBtn" onclick="openSchedulerModal()" style="display: {'none' if is_sched_running else 'inline-flex'};" title="预约次日早7点开放名额，准点自动极速提交">
+                <button type="button" class="btn-feature" id="featureSchedBtn" onclick="openSchedulerModal()" style="display: {'none' if is_sched_running else 'inline-flex'};" title="按设定时间自动提交预约">
                     ⏰ 定时预约
                 </button>
-                <button type="button" class="status-pill-running" id="featureSchedActiveBtn" onclick="openSchedulerModal()" style="display: {'inline-flex' if is_sched_running else 'none'};" title="定时预约待命中，点击查看详情或停止">
+                <button type="button" class="status-pill-running" id="featureSchedActiveBtn" onclick="openSchedulerModal()" style="display: {'inline-flex' if is_sched_running else 'none'};" title="定时任务已开启，点击查看状态或停止任务">
                     <span class="pulse-dot" style="background: #10b981;"></span>
-                    <span>🟢 定时预约中 (点击查看)</span>
+                    <span>🟢 定时任务已开启 (点击查看)</span>
                 </button>
 
-                <!-- 捡漏监听按钮：未运行时展示常规按钮，运行时展示高亮活动状态 -->
-                <button type="button" class="btn-feature" id="featureSnipeBtn" onclick="openSnipeModal()" style="display: {'none' if is_snipe_running else 'inline-flex'};" title="高频监测退票名额，毫秒级极速捡漏秒抢">
-                    🎯 捡漏监听
+                <!-- 余量监测按钮：未运行时展示常规按钮，运行时展示高亮活动状态 -->
+                <button type="button" class="btn-feature" id="featureSnipeBtn" onclick="openSnipeModal()" style="display: {'none' if is_snipe_running else 'inline-flex'};" title="定期检查空余名额，发现名额后自动尝试预约">
+                    🎯 余量监测
                 </button>
-                <button type="button" class="status-pill-running snipe" id="featureSnipeActiveBtn" onclick="openSnipeModal()" style="display: {'inline-flex' if is_snipe_running else 'none'};" title="捡漏监听进行中，点击查看实时日志或停止">
+                <button type="button" class="status-pill-running snipe" id="featureSnipeActiveBtn" onclick="openSnipeModal()" style="display: {'inline-flex' if is_snipe_running else 'none'};" title="余量监测进行中，点击查看任务状态或停止">
                     <span class="pulse-dot" style="background: #2563eb;"></span>
-                    <span>🟢 正在捡漏中 (点击查看)</span>
+                    <span>🟢 余量监测中 (点击查看)</span>
                 </button>
 
                 <!-- 抢票结果通知设置按钮 -->
-                <button type="button" class="btn-feature" id="featureNotifyBtn" onclick="openNotifyModal()" title="设置抢票成功微信/QQ邮箱即时通知" style="display: inline-flex; align-items: center; gap: 6px;">
+                <button type="button" class="btn-feature" id="featureNotifyBtn" onclick="openNotifyModal()" title="设置预约结果通知" style="display: inline-flex; align-items: center; gap: 6px;">
                     <span>🔔 通知提醒</span>
                     <span id="featureNotifyStatusBadge" style="font-size: 11px; padding: 1px 6px; border-radius: 8px; font-weight: 600; {'background: #dcfce7; color: #15803d;' if is_notify_enabled else 'background: #f1f5f9; color: #64748b;'}">{'🟢 已开启' if is_notify_enabled else '⚪ 未开启'}</span>
                 </button>
@@ -1141,7 +1141,7 @@ def render_dashboard(data: dict) -> str:
                 </button>
             </div>
             <div class="feature-tip">
-                <span>💡 <strong>定时预约</strong>：早 07:00 秒抢 ｜ <strong>捡漏监听</strong>：高频监测退票 ｜ <strong>通知设置</strong>：微信秒弹 ｜ <strong>我的预约</strong>：查看有效场次</span>
+                <span>💡 <strong>定时预约</strong>：按计划提交 ｜ <strong>余量监测</strong>：发现名额后尝试预约 ｜ <strong>通知设置</strong>：接收预约结果 ｜ <strong>我的预约</strong>：查看有效场次</span>
             </div>
         </div>
 
@@ -1163,7 +1163,7 @@ def render_dashboard(data: dict) -> str:
         <div class="footer">
             <span>最后查询时间: {query_time}</span>
             <div style="font-size: 12px; color: var(--text-sub);">
-                厦门大学体育馆场地预约 · 实时直连系统
+                场次数据以场馆系统返回结果为准
             </div>
         </div>
     </div>
@@ -1198,7 +1198,7 @@ def render_dashboard(data: dict) -> str:
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <span style="font-size: 24px;">🔔</span>
                     <div>
-                        <h2 style="font-size: 17px; font-weight: 700; color: #0f172a; margin: 0;">抢票通知设置</h2>
+                        <h2 style="font-size: 17px; font-weight: 700; color: #0f172a; margin: 0;">预约通知设置</h2>
                     </div>
                 </div>
                 <button type="button" class="modal-close-btn" onclick="closeNotifyModal()" title="关闭">✕</button>
@@ -1217,7 +1217,7 @@ def render_dashboard(data: dict) -> str:
                 <div style="margin: 16px 0; padding: 14px 16px; background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center;">
                     <div>
                         <div style="font-weight: 700; font-size: 14px; color: #1e293b;">通知提醒总开关</div>
-                        <div style="font-size: 12px; color: #64748b; margin-top: 2px;">抢票成功后自动向下方邮箱投递场地详情卡片</div>
+                        <div style="font-size: 12px; color: #64748b; margin-top: 2px;">接收预约结果和任务异常通知</div>
                     </div>
                     <label class="switch-toggle" title="切换通知开关">
                         <input type="checkbox" id="notifySwitch" {'checked' if is_notify_enabled else ''}>
@@ -1228,19 +1228,19 @@ def render_dashboard(data: dict) -> str:
                 <!-- 邮箱地址输入 -->
                 <div class="form-group" style="margin-bottom: 16px;">
                     <label class="form-label" for="notifyEmailInput">
-                        <span>接收通知的 QQ 邮箱:</span>
+                        <span>接收通知的邮箱:</span>
                         <span style="font-size: 11px; color: #2563eb; font-weight: normal;">支持 QQ / 163 / 厦大校园邮箱</span>
                     </label>
                     <input type="email" id="notifyEmailInput" value="{notify_email}" placeholder="例如: 123456789@qq.com" style="width: 100%; box-sizing: border-box; padding: 10px 14px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 14px; outline: none; transition: border-color .2s;" onfocus="this.style.borderColor='#2563eb'" onblur="this.style.borderColor='#cbd5e1'">
                     <p style="font-size: 12px; color: #64748b; margin: 6px 0 0 0;">
-                        💡 提示：强烈推荐填常用 QQ 邮箱。投递成功后手机微信会自动收到卡片通知。
+                        通知将发送至填写的邮箱。微信提醒取决于账号绑定、相关功能和通知设置。
                     </p>
                 </div>
 
                 <!-- 微信设置排查折叠指引 -->
                 <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 12px; font-size: 12px; color: #1e40af; line-height: 1.6;">
-                    <div style="font-weight: 700; margin-bottom: 3px;">📱 如何确保手机微信弹出卡片提醒？</div>
-                    打开手机微信 ➔【我】➔【设置】➔【通用】➔【辅助功能】➔ 确保【QQ邮箱提醒】为<strong>“已启用”</strong>状态即可！
+                    <div style="font-weight: 700; margin-bottom: 3px;">📱 可选：微信邮件提醒</div>
+                    如需微信提醒，请检查微信中的 QQ 邮箱提醒功能及通知设置。具体可用性以您的账号和客户端为准，建议先发送测试邮件。
                 </div>
             </div>
 
@@ -1289,7 +1289,7 @@ def render_dashboard(data: dict) -> str:
                 <div id="myOrdersEmpty" style="display: none; text-align: center; padding: 45px 0; color: #94a3b8;">
                     <div style="font-size: 36px; margin-bottom: 8px;">📭</div>
                     <div style="font-size: 14px; font-weight: 600; color: #64748b;">暂无相关预约记录</div>
-                    <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">快去预约场地或开启定时抢票吧！</div>
+                    <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">您可以选择场次立即预约，或设置定时预约。</div>
                 </div>
             </div>
 
@@ -1310,7 +1310,7 @@ def render_dashboard(data: dict) -> str:
                     <span style="font-size: 24px;">⏰</span>
                     <div>
                         <h2 style="font-size: 17px; font-weight: 700; color: #0f172a; margin: 0;">定时预约</h2>
-                        <p style="font-size: 12px; color: #64748b; margin: 3px 0 0 0;">预约次日开放名额 · 系统在早 07:00 准点自动极速提交</p>
+                        <p style="font-size: 12px; color: #64748b; margin: 3px 0 0 0;">按设定时间自动提交预约，具体日期与时段以当前计划为准</p>
                     </div>
                 </div>
                 <button type="button" class="modal-close-btn" onclick="closeSchedulerModal()" title="关闭">✕</button>
@@ -1324,8 +1324,8 @@ def render_dashboard(data: dict) -> str:
                         <span>预约规则说明</span>
                     </div>
                     <div style="color: #1e40af; font-size: 13px; line-height: 1.6;">
-                        系统<strong>默认定时预约当天早上 07:00:00 开放的第二天的健身房名额</strong>。<br>
-                        <em>例如：周一早 07:00 会准点为您争抢周二的健身房场地。</em>
+                        系统<strong>默认于每天 07:00 尝试预约次日场次</strong>，具体执行时间以当前设置为准。<br>
+                        <em>例如：使用默认设置时，周一执行的任务预约周二入场。</em>
                     </div>
                 </div>
 
@@ -1334,25 +1334,25 @@ def render_dashboard(data: dict) -> str:
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                         <div style="display: flex; align-items: center; gap: 8px;">
                             <span class="pulse-dot" style="background: #10b981;"></span>
-                            <span style="font-weight: 700; font-size: 14px; color: #166534;">🟢 当前正在预约中</span>
+                            <span style="font-weight: 700; font-size: 14px; color: #166534;">🟢 定时任务已开启</span>
                         </div>
-                        <span style="font-size: 12px; color: #15803d; font-weight: 600; background: #dcfce7; padding: 2px 8px; border-radius: 10px;">已在后台待命</span>
+                        <span style="font-size: 12px; color: #15803d; font-weight: 600; background: #dcfce7; padding: 2px 8px; border-radius: 10px;">后台运行中</span>
                     </div>
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px; color: #1e293b;">
                         <div><strong>📍 预约地点:</strong> <span id="infoStadiumName">{stadium_name}</span></div>
                         <div><strong>🕒 目标时段:</strong> <span id="infoPrefTime">{safe_pref_time}</span></div>
                         <div><strong>📅 入场日期:</strong> <span id="infoVisitDate">—</span></div>
-                        <div><strong>⏰ 开抢时刻:</strong> <span id="infoRunAt">—</span></div>
+                        <div><strong>⏰ 执行时间:</strong> <span id="infoRunAt">—</span></div>
                     </div>
                     <div id="infoStatusDesc" style="font-size: 12px; color: #15803d; margin-top: 10px; padding-top: 8px; border-top: 1px dashed #bbf7d0;">
-                        {_html(scheduler_status.get('status_text', '将在早 07:00:00 准点为您极速提交预约'))}
+                        {_html(scheduler_status.get('status_text', '将按当前计划执行预约，请查看下次执行时间'))}
                     </div>
                 </div>
 
                 <!-- 表单项 1: 想去的地点选择 (用户能够修改想去的地点) -->
                 <div class="form-group">
                     <div class="form-label">
-                        <span>📍 想去的地点 (校区与场馆选择)</span>
+                        <span>📍 预约场馆</span>
                         <span style="font-size: 12px; font-weight: normal; color: #64748b;">点击卡片即可切换</span>
                     </div>
                     <div class="venue-cards-grid">
@@ -1384,24 +1384,24 @@ def render_dashboard(data: dict) -> str:
                         <span><input type="checkbox" id="schedWeeklyEnabled" {'checked' if weekly_enabled else ''} onchange="toggleWeeklyPlan()"> 按每周计划循环预约</span>
                     </label>
                     <div id="weeklyPlanFields" style="display: {'block' if weekly_enabled else 'none'};">
-                        <p style="font-size: 13px; color: #475569; line-height: 1.7;">按<strong>实际入场日期</strong>填写；首选留空表示当天不预约。周六的场次在周五 07:00 开抢。每天最多填 3 个时段，<strong>从左到右优先级由高到低</strong>：首选因满额或课程占用约不到时，自动改约下一个备选；所填时段全部约不到才算失败，绝不改约计划外的时段，并通过已配置的通知渠道提醒。</p>
+                        <p style="font-size: 13px; color: #475569; line-height: 1.7;">按<strong>入场日期</strong>填写，每天最多设置 3 个时段，系统<strong>从左到右依次尝试预约</strong>。不填写时段表示当天不预约。首选满额或被课程占用时，尝试下一个备选，仅预约您填写的时段。默认 07:00 执行时，周六入场的场次在周五尝试预约；结果通过已配置的通知渠道发送。</p>
                         <div style="display: grid; grid-template-columns: 48px repeat({MAX_PRIORITY_SLOTS}, minmax(0, 1fr)); gap: 8px; align-items: center;">
-                            <span></span><span style="font-size: 12px; color: #64748b;">首选</span><span style="font-size: 12px; color: #64748b;">备选 2</span><span style="font-size: 12px; color: #64748b;">备选 3</span>
+                            <span></span><span style="font-size: 12px; color: #64748b;">首选</span><span style="font-size: 12px; color: #64748b;">备选 1</span><span style="font-size: 12px; color: #64748b;">备选 2</span>
                             {weekly_rows_html}
                         </div>
                         <datalist id="weeklyTimeOptions">{weekly_options_html}</datalist>
                         <p style="font-size: 12px; color: #64748b;">时段格式如 16:30-18:00。修改运行中的计划，请先停止，再保存并重新开启。电脑需保持唤醒，服务重启后需重新开启。</p>
-                        <div style="margin-top: 12px; font-weight: 600;">特例日期（优先于计划表）</div>
-                        <p style="font-size: 12px; color: #64748b; margin: 4px 0 8px;">指定某个<strong>入场日期</strong>改约其他时段，或给计划表没有的日子加一次预约；同样支持 3 个优先级。过期日期保存时自动清理。</p>
+                        <div style="margin-top: 12px; font-weight: 600;">指定日期安排（优先于每周计划）</div>
+                        <p style="font-size: 12px; color: #64748b; margin: 4px 0 8px;">为指定<strong>入场日期</strong>单独设置预约时段，同一日期优先使用此安排，也可为每周计划外的日期增加预约。最多设置 3 个时段，过期日期会在保存时清理。</p>
                         <div id="overrideRows">{override_rows_html}</div>
-                        <button type="button" class="btn-action" onclick="addOverrideRow()" style="font-size: 12px;">➕ 添加特例</button>
+                        <button type="button" class="btn-action" onclick="addOverrideRow()" style="font-size: 12px;">➕ 添加日期安排</button>
                     </div>
                 </div>
 
                 <!-- 单次定时预约时段 -->
                 <div class="form-group" id="singleScheduleFields" style="display: {'none' if weekly_enabled else 'block'};">
                     <div class="form-label">
-                        <span>🕒 目标预约时段 (想约的健身时间)</span>
+                        <span>🕒 首选时段</span>
                         <span style="font-size: 12px; font-weight: normal; color: #64748b;">快捷选择或在下方手动修改</span>
                     </div>
                     <div class="time-chips-wrap" id="schedTimeChips">
@@ -1415,8 +1415,8 @@ def render_dashboard(data: dict) -> str:
                 <!-- 每天开抢触发时刻 (开放自定义，如 07:01:34) -->
                 <div class="form-group">
                     <div class="form-label">
-                        <span>⏰ 每天开抢触发时刻 (精确到秒)</span>
-                        <span style="font-size: 12px; font-weight: normal; color: #64748b;">系统将在该时刻准点并发抢票</span>
+                        <span>⏰ 每日执行时间（精确到秒）</span>
+                        <span style="font-size: 12px; font-weight: normal; color: #64748b;">系统将在设定时间尝试提交预约</span>
                     </div>
                     <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
                         <input type="text" id="schedTargetTimeInput" class="form-input" style="max-width: 170px; font-family: monospace; font-size: 14px; font-weight: 600;" placeholder="07:00:00" value="{_html(current_target_time)}">
@@ -1424,7 +1424,7 @@ def render_dashboard(data: dict) -> str:
                             <button type="button" class="btn-action" style="font-size: 12px; padding: 6px 10px;" onclick="setTargetTime('07:00:00')">07:00:00 (常规)</button>
                         </div>
                     </div>
-                    <p style="font-size: 12px; color: #64748b; margin-top: 5px; margin-bottom: 0;">支持格式为 <code>HH:MM:SS</code>（如 <code>07:00:00</code>），可根据实际放票规律自由设置精确起跑时间。</p>
+                    <p style="font-size: 12px; color: #64748b; margin-top: 5px; margin-bottom: 0;">支持格式为 <code>HH:MM:SS</code>（如 <code>07:00:00</code>），请根据场馆的名额开放时间设置。</p>
                 </div>
                 <input type="hidden" id="schedTargetDateOffset" value="{_html(target_config.get('target_date_offset', 1))}">
 
@@ -1432,7 +1432,7 @@ def render_dashboard(data: dict) -> str:
                 <div style="padding: 12px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0; margin-top: 6px;">
                     <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #334155; cursor: pointer;">
                         <input type="checkbox" id="schedFallbackNearest" checked style="cursor: pointer;">
-                        <span>首选时段满额时，自动就近选择相邻时段降级抢票（极大提高成功率）</span>
+                        <span>首选时段已满时，允许尝试相邻时段，实际预约时间可能变化；每周计划仅尝试填写的时段</span>
                     </label>
                 </div>
             </div>
@@ -1440,7 +1440,7 @@ def render_dashboard(data: dict) -> str:
             <div class="modal-footer">
                 <div style="display: flex; gap: 8px;">
                     <button type="button" class="btn-action" id="btnStopScheduler" onclick="stopSchedulerTask()" style="display: {'inline-block' if is_sched_running else 'none'}; background: #fee2e2; border-color: #fca5a5; color: #b91c1c; font-weight: 600;">
-                        ⏹️ 取消 / 停止预约
+                        ⏹️ 停止定时任务
                     </button>
                     <button type="button" class="btn-action" onclick="saveSchedulerConfigOnly()" style="font-weight: 500;">
                         💾 仅保存设置
@@ -1449,64 +1449,64 @@ def render_dashboard(data: dict) -> str:
                 <div style="display: flex; gap: 8px;">
                     <button type="button" class="btn-action" onclick="closeSchedulerModal()">关闭</button>
                     <button type="button" class="btn-action btn-primary" id="btnStartScheduler" onclick="startSchedulerTask()" style="font-weight: 700; padding: 8px 18px;">
-                        {'🔄 更新预约设置' if is_sched_running else '🚀 开启定时预约'}
+                        {'请先停止再修改计划' if is_sched_running else '🚀 开启定时预约'}
                     </button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- 实时退票捡漏监听设置与运行状态模态框 -->
+    <!-- 余量监测设置与运行状态模态框 -->
     <div id="snipeModal" class="modal-overlay" style="display: none;">
         <div class="modal-card">
             <div class="modal-header">
                 <div style="display: flex; align-items: center; gap: 10px;">
                     <span style="font-size: 24px;">🎯</span>
                     <div>
-                        <h2 style="font-size: 17px; font-weight: 700; color: #0f172a; margin: 0;">实时退票捡漏监听</h2>
-                        <p style="font-size: 12px; color: #64748b; margin: 3px 0 0 0;">高频监测目标场次退票名额 · 毫秒级极速并发抢单</p>
+                        <h2 style="font-size: 17px; font-weight: 700; color: #0f172a; margin: 0;">余量监测</h2>
+                        <p style="font-size: 12px; color: #64748b; margin: 3px 0 0 0;">按设定间隔检查空余名额，发现名额后自动尝试预约</p>
                     </div>
                 </div>
                 <button type="button" class="modal-close-btn" onclick="closeSnipeModal()" title="关闭">✕</button>
             </div>
 
             <div class="modal-body">
-                <!-- 捡漏原理说明横幅 -->
+                <!-- 工作说明横幅 -->
                 <div class="rule-banner">
                     <div style="font-weight: 700; color: #1e3a8a; margin-bottom: 5px; display: flex; align-items: center; gap: 6px;">
                         <span>💡</span>
-                        <span>捡漏原理说明</span>
+                        <span>工作说明</span>
                     </div>
                     <div style="color: #1e40af; font-size: 13px; line-height: 1.6;">
-                        针对已约满的热门场次，系统以<strong>高频持续轮询探测</strong>。<br>
-                        一旦有其他同学<strong>退票释出名额，毫秒级瞬间并发提交抢单锁定</strong>。
+                        系统按设定间隔<strong>检查所选场次的空余名额</strong>。<br>
+                        若出现空余名额，将<strong>自动尝试提交预约</strong>，结果以场馆系统确认为准。
                     </div>
                 </div>
 
-                <!-- 当前捡漏监听状态卡片 (正在捡漏时高亮展示) -->
+                <!-- 当前余量监测状态卡片 (正在余量监测时高亮展示) -->
                 <div id="snipeInfoCard" style="display: {'block' if is_snipe_running else 'none'}; background: #eff6ff; border: 1.5px solid #93c5fd; border-radius: 12px; padding: 14px 16px; margin-bottom: 16px;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                         <div style="display: flex; align-items: center; gap: 8px;">
                             <span class="pulse-dot" style="background: #2563eb;"></span>
-                            <span style="font-weight: 700; font-size: 14px; color: #1d4ed8;">🟢 正在高频捡漏监听中</span>
+                            <span style="font-weight: 700; font-size: 14px; color: #1d4ed8;">🟢 正在检查空余名额</span>
                         </div>
-                        <span id="snipeInfoPollCount" style="font-size: 12px; color: #1d4ed8; font-weight: 600; background: #dbeafe; padding: 2px 8px; border-radius: 10px;">已探测 {snipe_status.get('poll_count', 0)} 次</span>
+                        <span id="snipeInfoPollCount" style="font-size: 12px; color: #1d4ed8; font-weight: 600; background: #dbeafe; padding: 2px 8px; border-radius: 10px;">已检查 {snipe_status.get('poll_count', 0)} 次</span>
                     </div>
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px; color: #1e293b;">
                         <div><strong>📍 目标场馆:</strong> <span id="snipeInfoStadium">{_html(snipe_status.get('stadium_name') or stadium_name)}</span></div>
                         <div><strong>📅 目标日期:</strong> <span id="snipeInfoDate">{_html(snipe_status.get('target_date') or tomorrow_str)}</span></div>
                         <div><strong>🕒 目标时段:</strong> <span id="snipeInfoTime">{_html(snipe_status.get('preferred_time') or current_pref_time)}</span></div>
-                        <div><strong>⚡ 运行模式:</strong> <span>毫秒并发秒抢</span></div>
+                        <div><strong>⚡ 运行模式:</strong> <span>定期检查并尝试预约</span></div>
                     </div>
                     <div id="snipeInfoStatusDesc" style="font-size: 12px; color: #1d4ed8; margin-top: 10px; padding-top: 8px; border-top: 1px dashed #bfdbfe;">
-                        {_html(snipe_status.get('status_text', '正在监听目标场次余量...'))}
+                        {_html(snipe_status.get('status_text', '正在检查所选场次的空余名额...'))}
                     </div>
                 </div>
 
-                <!-- 捡漏表单 1: 目标日期 -->
+                <!-- 余量监测表单 1: 目标日期 -->
                 <div class="form-group">
                     <div class="form-label">
-                        <span>📅 目标日期 (选择需要捡漏的日期)</span>
+                        <span>📅 入场日期</span>
                         <span style="font-size: 12px; font-weight: normal; color: #64748b;">快捷选择</span>
                     </div>
                     <div class="time-chips-wrap" id="snipeDateChips">
@@ -1518,10 +1518,10 @@ def render_dashboard(data: dict) -> str:
                     </div>
                 </div>
 
-                <!-- 捡漏表单 2: 目标时段 -->
+                <!-- 余量监测表单 2: 目标时段 -->
                 <div class="form-group">
                     <div class="form-label">
-                        <span>🕒 目标预约时段 (想约的健身时间)</span>
+                        <span>🕒 首选时段</span>
                         <span style="font-size: 12px; font-weight: normal; color: #64748b;">快捷选择</span>
                     </div>
                     <div class="time-chips-wrap" id="snipeTimeChips">
@@ -1532,25 +1532,25 @@ def render_dashboard(data: dict) -> str:
                     </div>
                 </div>
 
-                <!-- 捡漏表单 3: 轮询频率选择 -->
+                <!-- 余量监测表单 3: 轮询频率选择 -->
                 <div class="form-group">
                     <div class="form-label">
-                        <span>⏱️ 轮询检测间隔</span>
-                        <span style="font-size: 12px; font-weight: normal; color: #64748b;">当前选中: <strong id="snipeIntervalDisplay" style="color: #2563eb; font-weight: 700;">2.0 秒</strong> (推荐平衡 · 默认)</span>
+                        <span>⏱️ 检查间隔</span>
+                        <span style="font-size: 12px; font-weight: normal; color: #64748b;">当前选中: <strong id="snipeIntervalDisplay" style="color: #2563eb; font-weight: 700;">2 秒</strong>（默认）</span>
                     </div>
                     <div class="time-chips-wrap" id="snipeIntervalChips">
-                        <button type="button" class="time-chip" data-val="1.5" onclick="setSnipeInterval(1.5)">⚡ 1.5 秒 (极速)</button>
-                        <button type="button" class="time-chip active" data-val="2.0" onclick="setSnipeInterval(2.0)">⭐ 2.0 秒 (推荐平衡 · 默认)</button>
-                        <button type="button" class="time-chip" data-val="3.0" onclick="setSnipeInterval(3.0)">🌿 3.0 秒 (平稳静默)</button>
+                        <button type="button" class="time-chip" data-val="1.5" onclick="setSnipeInterval(1.5)">⚡ 1.5 秒</button>
+                        <button type="button" class="time-chip active" data-val="2.0" onclick="setSnipeInterval(2.0)">⭐ 2 秒（默认）</button>
+                        <button type="button" class="time-chip" data-val="3.0" onclick="setSnipeInterval(3.0)">🌿 3 秒</button>
                     </div>
                     <input type="hidden" id="snipePollInterval" value="2.0">
                 </div>
 
-                <!-- 捡漏表单 4: 辅助选项 -->
+                <!-- 余量监测表单 4: 辅助选项 -->
                 <div style="padding: 12px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0; margin-top: 6px;">
                     <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #334155; cursor: pointer;">
                         <input type="checkbox" id="snipeFallbackNearest" checked style="cursor: pointer;">
-                        <span>首选时段暂无退票时，临近时段一旦有退票也自动争抢（提高捡漏成功几率）</span>
+                        <span>首选时段暂无名额时，允许尝试相邻时段，实际预约时间可能变化</span>
                     </label>
                 </div>
             </div>
@@ -1558,13 +1558,13 @@ def render_dashboard(data: dict) -> str:
             <div class="modal-footer">
                 <div>
                     <button type="button" class="btn-action" id="btnStopSnipe" onclick="stopSnipeTask()" style="display: {'inline-block' if is_snipe_running else 'none'}; background: #fee2e2; border-color: #fca5a5; color: #b91c1c; font-weight: 600;">
-                        ⏹️ 停止捡漏监听
+                        ⏹️ 停止余量监测
                     </button>
                 </div>
                 <div style="display: flex; gap: 8px;">
                     <button type="button" class="btn-action" onclick="closeSnipeModal()">关闭</button>
                     <button type="button" class="btn-action btn-primary" id="btnStartSnipe" onclick="startSnipeTask()" style="font-weight: 700; padding: 8px 18px;" {'disabled' if is_snipe_running else ''}>
-                        {'🟢 正在捡漏中' if is_snipe_running else '🚀 启动捡漏监听'}
+                        {'🟢 余量监测中' if is_snipe_running else '🚀 启动余量监测'}
                     </button>
                 </div>
             </div>
@@ -1635,7 +1635,7 @@ def render_dashboard(data: dict) -> str:
                 const titles = {{
                     success: "操作成功",
                     error: "操作失败",
-                    warning: "温馨提醒",
+                    warning: "提醒",
                     info: "系统提示"
                 }};
 
@@ -1771,7 +1771,7 @@ def render_dashboard(data: dict) -> str:
                 if (confirmBtn) {{
                     confirmBtn.style.display = "inline-block";
                     confirmBtn.disabled = false;
-                    confirmBtn.innerText = "保存提交";
+                    confirmBtn.innerText = "提交";
                     confirmBtn.className = "dialog-btn dialog-btn-confirm";
                     confirmBtn.onclick = () => {{
                         const val = inputEl ? inputEl.value.trim() : "";
@@ -1809,7 +1809,7 @@ def render_dashboard(data: dict) -> str:
                     if (refBtn) refBtn.style.display = "inline-block";
                 }}
             }} catch (err) {{
-                if (qrStatus) qrStatus.innerText = "连接异常: " + err.message;
+                if (qrStatus) qrStatus.innerText = "连接失败，请检查网络后重试";
                 if (refBtn) refBtn.style.display = "inline-block";
             }}
         }}
@@ -1840,7 +1840,7 @@ def render_dashboard(data: dict) -> str:
                         if (refBtn) refBtn.style.display = "inline-block";
                     }} else if (data.code === "error") {{
                         clearInterval(inlinePollTimer);
-                        if (qrStatus) qrStatus.innerText = data.desc || "凭据置换异常，请刷新重试";
+                        if (qrStatus) qrStatus.innerText = data.desc || "登录未完成，请刷新二维码后重试";
                         if (refBtn) refBtn.style.display = "inline-block";
                     }}
                 }} catch(e) {{}}
@@ -1869,11 +1869,11 @@ def render_dashboard(data: dict) -> str:
 
             if (btn) {{
                 btn.disabled = true;
-                btn.innerText = "⏳ 正在登录统一身份认证...";
+                btn.innerText = "⏳ 正在登录...";
             }}
             if (msg) {{
                 msg.style.color = "#475569";
-                msg.innerText = "正在登录统一身份认证，识别验证码中...";
+                msg.innerText = "正在登录，请稍候...";
             }}
 
             try {{
@@ -1904,7 +1904,7 @@ def render_dashboard(data: dict) -> str:
             }} catch (e) {{
                 if (msg) {{
                     msg.style.color = "#b91c1c";
-                    msg.innerText = "请求异常: " + e.message;
+                    msg.innerText = "连接失败，请检查网络后重试";
                 }}
             }} finally {{
                 if (btn) {{
@@ -1943,7 +1943,7 @@ def render_dashboard(data: dict) -> str:
                 autoRefreshInterval = setInterval(() => {{
                     location.reload();
                 }}, 30000);
-                if (showNotify) showToast("已开启 30 秒自动刷新余量与会话保活", true);
+                if (showNotify) showToast("已开启每 30 秒刷新场次余量并检查登录状态", true);
             }} else {{
                 if (showNotify) showToast("已关闭自动刷新", true);
             }}
@@ -2058,12 +2058,12 @@ def render_dashboard(data: dict) -> str:
                 }});
                 const data = await res.json();
                 if (data.status === "ok") {{
-                    await customAlert(`测试邮件已成功投递至：${{email}}\\n\\n如果您的微信绑定了该 QQ 邮箱并开启了【QQ邮箱提醒】，稍候几秒手机微信即可弹出测试卡片！`, "success", "测试通知发送成功");
+                    await customAlert(`测试邮件已发送至：${{email}}\\n\\n请检查收件箱或垃圾邮件。微信提醒取决于您的账号和通知设置。`, "success", "测试通知发送成功");
                 }} else {{
                     await customAlert(`测试通知发送失败：\\n${{data.message || '未知错误'}}`, "error", "发送测试失败");
                 }}
             }} catch (err) {{
-                await customAlert(`网络请求异常：${{err.message}}`, "error");
+                await customAlert("连接失败，请检查网络后重试", "error");
             }} finally {{
                 if (btn) {{
                     btn.disabled = false;
@@ -2111,7 +2111,7 @@ def render_dashboard(data: dict) -> str:
                     await customAlert(`保存通知配置失败：${{data.message || '未知错误'}}`, "error");
                 }}
             }} catch (err) {{
-                await customAlert(`网络请求异常：${{err.message}}`, "error");
+                await customAlert("连接失败，请检查网络后重试", "error");
             }} finally {{
                 if (btn) {{
                     btn.disabled = false;
@@ -2211,7 +2211,7 @@ def render_dashboard(data: dict) -> str:
                 if (loadingEl) loadingEl.style.display = "none";
                 if (emptyEl) {{
                     emptyEl.style.display = "block";
-                    emptyEl.innerHTML = `<div style="font-size: 32px; margin-bottom: 8px;">❌</div><div style="font-weight: 600; color: #b91c1c;">网络请求失败: ${{err.message}}</div>`;
+                    emptyEl.innerHTML = `<div style="font-size: 32px; margin-bottom: 8px;">❌</div><div style="font-weight: 600; color: #b91c1c;">连接失败，请检查网络后重试</div>`;
                 }}
             }} finally {{
                 if (refreshBtn) {{
@@ -2245,8 +2245,8 @@ def render_dashboard(data: dict) -> str:
                     if (_currentOrderFilter === 'active') {{
                         emptyEl.innerHTML = `
                             <div style="font-size: 36px; margin-bottom: 8px;">📭</div>
-                            <div style="font-size: 14px; font-weight: 600; color: #64748b;">当前暂无预约有效的场次</div>
-                            <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">可在主界面挑选心仪场地立刻预约或开启定时秒抢！</div>
+                            <div style="font-size: 14px; font-weight: 600; color: #64748b;">暂无有效预约</div>
+                            <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">您可以选择场次立即预约，或设置定时预约。</div>
                         `;
                     }} else {{
                         emptyEl.innerHTML = `
@@ -2459,10 +2459,10 @@ def render_dashboard(data: dict) -> str:
             const row = document.createElement("div");
             row.className = "override-row";
             row.style.cssText = "{override_row_style}";
-            row.innerHTML = '<input type="date" class="form-input override-date" aria-label="特例入场日期">'
-                + '<input class="form-input override-slot" list="weeklyTimeOptions" aria-label="特例首选时段" placeholder="16:30-18:00">'
-                + '<input class="form-input override-slot" list="weeklyTimeOptions" aria-label="特例第 2 优先级时段" placeholder="备选 2（可选）">'
-                + '<input class="form-input override-slot" list="weeklyTimeOptions" aria-label="特例第 3 优先级时段" placeholder="备选 3（可选）">'
+            row.innerHTML = '<input type="date" class="form-input override-date" aria-label="指定入场日期">'
+                + '<input class="form-input override-slot" list="weeklyTimeOptions" aria-label="指定日期首选时段" placeholder="16:30-18:00">'
+                + '<input class="form-input override-slot" list="weeklyTimeOptions" aria-label="指定日期第 2 优先级时段" placeholder="备选 1（可选）">'
+                + '<input class="form-input override-slot" list="weeklyTimeOptions" aria-label="指定日期第 3 优先级时段" placeholder="备选 2（可选）">'
                 + '<button type="button" class="btn-action" title="删除" onclick="this.parentElement.remove()">🗑️</button>';
             document.getElementById("overrideRows").appendChild(row);
         }}
@@ -2525,13 +2525,13 @@ def render_dashboard(data: dict) -> str:
                 }});
                 const data = await res.json();
                 if (data.success) {{
-                    showToast("🎉 配置保存成功！页面即将刷新对齐最新场地...", true);
+                    showToast("🎉 设置已保存，正在刷新场次数据...", true);
                     setTimeout(() => location.reload(), 800);
                 }} else {{
                     await customAlert(data.info || "未知错误", "error", "保存配置失败");
                 }}
             }} catch(e) {{
-                await customAlert("保存配置请求出错: " + e, "error");
+                await customAlert("设置保存失败，请检查网络后重试", "error");
             }}
         }}
 
@@ -2551,7 +2551,7 @@ def render_dashboard(data: dict) -> str:
                 }});
                 const data = await res.json();
                 if (data.success) {{
-                    showToast(data.info || "🎉 定时预约已开启！将在明早 07:00 准点抢票", true);
+                    showToast(data.info || "定时预约已开启，请查看下次执行时间", true);
                     fetchSchedulerStatus();
                     setTimeout(() => location.reload(), 1000);
                 }} else {{
@@ -2566,17 +2566,17 @@ def render_dashboard(data: dict) -> str:
                     btnStart.disabled = false;
                     btnStart.innerText = "🚀 开启定时预约";
                 }}
-                await customAlert("开启定时预约请求出错: " + e, "error");
+                await customAlert("定时任务启动失败，请检查网络后重试", "error");
             }}
         }}
 
         async function stopSchedulerTask() {{
-            if (!await customConfirm("确认取消当前正在预约的早7点自动预约任务吗？", "取消定时预约", {{ isDanger: true, confirmText: "确认取消" }})) return;
-            showToast("⏳ 正在取消预约任务...", true);
+            if (!await customConfirm("确认停止定时任务吗？已成功的预约仍然有效，正在提交的请求请在预约记录中核对结果。", "停止定时任务", {{ isDanger: true, confirmText: "停止任务" }})) return;
+            showToast("⏳ 正在停止定时任务...", true);
             const btnStop = document.getElementById("btnStopScheduler");
             if (btnStop) {{
                 btnStop.disabled = true;
-                btnStop.innerText = "⏳ 正在取消...";
+                btnStop.innerText = "⏳ 正在停止...";
             }}
             try {{
                 const res = await fetch("/api/scheduler/stop", {{
@@ -2585,28 +2585,28 @@ def render_dashboard(data: dict) -> str:
                 }});
                 const data = await res.json();
                 if (data.success) {{
-                    showToast(data.info || "已取消预约任务", true);
+                    showToast(data.info || "定时任务已停止", true);
                     fetchSchedulerStatus();
                     setTimeout(() => location.reload(), 800);
                 }} else {{
                     if (btnStop) {{
                         btnStop.disabled = false;
-                        btnStop.innerText = "⏹️ 取消 / 停止预约";
+                        btnStop.innerText = "⏹️ 停止定时任务";
                     }}
-                    await customAlert(data.info || "未知错误", "error", "取消失败");
+                    await customAlert(data.info || "未知错误", "error", "停止失败");
                 }}
             }} catch(e) {{
                 if (btnStop) {{
                     btnStop.disabled = false;
-                    btnStop.innerText = "⏹️ 取消 / 停止预约";
+                    btnStop.innerText = "⏹️ 停止定时任务";
                 }}
-                await customAlert("取消请求出错: " + e, "error");
+                await customAlert("停止任务请求失败，请检查任务状态后重试", "error");
             }}
         }}
 
         async function switchCampus(campus) {{
             const campusName = (campus === "siming" ? "思明校区" : "翔安校区");
-            showToast(`⏳ 正在切换至 ${{campusName}} 并加载最新排班...`, true);
+            showToast(`⏳ 正在切换至 ${{campusName}} 并加载最新场次...`, true);
             try {{
                 const res = await fetch("/api/campus/switch", {{
                     method: "POST",
@@ -2623,7 +2623,7 @@ def render_dashboard(data: dict) -> str:
                     await customAlert("切换校区失败: " + (data.info || "未知错误"), "error");
                 }}
             }} catch(e) {{
-                await customAlert("切换校区网络异常: " + e, "error");
+                await customAlert("切换校区失败，请检查网络后重试", "error");
             }}
         }}
 
@@ -2688,7 +2688,7 @@ def render_dashboard(data: dict) -> str:
             if (disp) {{
                 disp.textContent = val + " 秒";
             }}
-            showToast(`已设置检测频率为 ${{val}} 秒`, true);
+            showToast(`已设置检查间隔为 ${{val}} 秒`, true);
         }}
 
         async function fetchSnipeStatus() {{
@@ -2698,7 +2698,7 @@ def render_dashboard(data: dict) -> str:
                 const isRunning = !!data.running;
                 currentSnipeRunning = isRunning;
 
-                // 1. 同步功能专属栏捡漏监听按钮与活动状态
+                // 1. 同步功能专属栏余量监测按钮与活动状态
                 const featBtn = document.getElementById("featureSnipeBtn");
                 const featActive = document.getElementById("featureSnipeActiveBtn");
                 if (isRunning) {{
@@ -2722,21 +2722,21 @@ def render_dashboard(data: dict) -> str:
                 if (infoStadium && data.stadium_name) infoStadium.innerText = data.stadium_name;
                 if (infoDate && data.target_date) infoDate.innerText = data.target_date;
                 if (infoPref && data.preferred_time) infoPref.innerText = data.preferred_time;
-                if (infoCount) infoCount.innerText = "已探测 " + (data.poll_count || 0) + " 次";
+                if (infoCount) infoCount.innerText = "已检查 " + (data.poll_count || 0) + " 次";
                 if (infoDesc && data.status_text) infoDesc.innerText = data.status_text;
 
                 if (isRunning) {{
                     if (infoCard) infoCard.style.display = "block";
                     if (btnStop) btnStop.style.display = "inline-block";
                     if (btnStart) {{
-                        btnStart.innerText = "🟢 正在捡漏中";
+                        btnStart.innerText = "🟢 余量监测中";
                         btnStart.disabled = true;
                     }}
                 }} else {{
                     if (infoCard) infoCard.style.display = "none";
                     if (btnStop) btnStop.style.display = "none";
                     if (btnStart) {{
-                        btnStart.innerText = "🚀 启动捡漏监听";
+                        btnStart.innerText = "🚀 启动余量监测";
                         btnStart.disabled = false;
                     }}
                 }}
@@ -2750,7 +2750,7 @@ def render_dashboard(data: dict) -> str:
             const fallbackNearest = document.getElementById("snipeFallbackNearest").checked;
 
             if (!targetDate) {{
-                await customAlert("请先输入或选择目标捡漏日期 (如 2026-09-17)", "warning", "提示");
+                await customAlert("请选择入场日期", "warning", "提示");
                 return;
             }}
             if (!prefTime) {{
@@ -2758,7 +2758,7 @@ def render_dashboard(data: dict) -> str:
                 return;
             }}
 
-            showToast("⏳ 正在启动实时捡漏监听...", true);
+            showToast("⏳ 正在启动实时余量监测...", true);
             const btnStart = document.getElementById("btnStartSnipe");
             if (btnStart) {{
                 btnStart.disabled = true;
@@ -2777,7 +2777,7 @@ def render_dashboard(data: dict) -> str:
                 }});
                 const data = await res.json();
                 if (data.success) {{
-                    showToast(data.info || "🎉 捡漏监听已开启！正在后台持续高频探测退票名额", true);
+                    showToast(data.info || "🎉 余量监测已开启，正在检查空余名额", true);
                     fetchSnipeStatus();
                     if (!snipePollStatusTimer) {{
                         snipePollStatusTimer = setInterval(fetchSnipeStatus, 1500);
@@ -2785,22 +2785,22 @@ def render_dashboard(data: dict) -> str:
                 }} else {{
                     if (btnStart) {{
                         btnStart.disabled = false;
-                        btnStart.innerText = "🚀 启动捡漏监听";
+                        btnStart.innerText = "🚀 启动余量监测";
                     }}
                     await customAlert(data.info || "未知错误", "error", "启动失败");
                 }}
             }} catch(e) {{
                 if (btnStart) {{
                     btnStart.disabled = false;
-                    btnStart.innerText = "🚀 启动捡漏监听";
+                    btnStart.innerText = "🚀 启动余量监测";
                 }}
-                await customAlert("启动捡漏请求出错: " + e, "error");
+                await customAlert("余量监测启动失败，请检查网络后重试", "error");
             }}
         }}
 
         async function stopSnipeTask() {{
-            if (!await customConfirm("确认停止当前正在进行的捡漏监听任务吗？", "停止捡漏监听", {{ isDanger: true, confirmText: "停止监听" }})) return;
-            showToast("⏳ 正在停止捡漏任务...", true);
+            if (!await customConfirm("确认停止余量监测吗？已成功的预约仍然有效，正在提交的请求请在预约记录中核对结果。", "停止余量监测", {{ isDanger: true, confirmText: "停止监测" }})) return;
+            showToast("⏳ 正在停止余量监测任务...", true);
             const btnStop = document.getElementById("btnStopSnipe");
             if (btnStop) {{
                 btnStop.disabled = true;
@@ -2813,26 +2813,26 @@ def render_dashboard(data: dict) -> str:
                 }});
                 const data = await res.json();
                 if (data.success) {{
-                    showToast(data.info || "已停止捡漏监听任务", true);
+                    showToast(data.info || "已停止余量监测任务", true);
                     fetchSnipeStatus();
                 }} else {{
                     if (btnStop) {{
                         btnStop.disabled = false;
-                        btnStop.innerText = "⏹️ 停止捡漏监听";
+                        btnStop.innerText = "⏹️ 停止余量监测";
                     }}
                     await customAlert(data.info || "未知错误", "error", "停止失败");
                 }}
             }} catch(e) {{
                 if (btnStop) {{
                     btnStop.disabled = false;
-                    btnStop.innerText = "⏹️ 停止捡漏监听";
+                    btnStop.innerText = "⏹️ 停止余量监测";
                 }}
-                await customAlert("停止请求出错: " + e, "error");
+                await customAlert("停止监测请求失败，请检查任务状态后重试", "error");
             }}
         }}
 
         async function reloginSession() {{
-            showToast("⏳ 正在通过 checkLogin 执行纯 HTTP 自动续登 (无需打开微信)...", true);
+            showToast("⏳ 正在尝试重新登录...", true);
             try {{
                 const r = await fetch('/api/relogin', {{
                     method: 'POST',
@@ -2840,20 +2840,20 @@ def render_dashboard(data: dict) -> str:
                 }});
                 const data = await r.json();
                 if (data.success) {{
-                    showToast(data.info || "🎉 纯 HTTP 自动续登成功！最新 Session 已生效", true);
+                    showToast(data.info || "🎉 已重新登录，可以继续预约", true);
                     setTimeout(() => location.reload(), 900);
                 }} else {{
-                    await customAlert(data.info || "checkLogin 纯 HTTP 续登未成功，可能长效凭证已过期，请使用扫码登录或点击【手动登录】通过小程序获取凭据", "warning", "续登提醒");
+                    await customAlert(data.info || "自动重新登录未成功，请扫码登录或通过小程序登录", "warning", "登录提醒");
                 }}
             }} catch(e) {{
-                await customAlert("续登请求出错: " + e, "error");
+                await customAlert("重新登录请求失败，请检查网络后重试", "error");
             }}
         }}
 
         async function setManualToken() {{
-            const token = await customPrompt("请输入最新的 PHPSESSID 字符串 (如 0e3af18a85fad0fc5bbb7071ecbe20c5):", "", "手动输入 Token 凭据");
+            const token = await customPrompt("请输入登录凭证（PHPSESSID）：", "", "手动填写登录凭证");
             if (!token || !token.trim()) return;
-            showToast("⏳ 正在验证并保存 Token...", true);
+            showToast("⏳ 正在验证并保存登录凭证...", true);
             try {{
                 const r = await fetch('/api/set_token', {{
                     method: 'POST',
@@ -2862,24 +2862,24 @@ def render_dashboard(data: dict) -> str:
                 }});
                 const data = await r.json();
                 if (data.success) {{
-                    await customAlert(data.info, "success", "Token 保存成功");
+                    await customAlert(data.info, "success", "登录凭证已保存");
                     location.reload();
                 }} else {{
                     await customAlert(data.info || "验证未通过", "error", "保存失败");
                 }}
             }} catch(e) {{
-                await customAlert("请求出错: " + e, "error");
+                await customAlert("操作未完成，请检查网络后重试", "error");
             }}
         }}
 
         async function harvestSession() {{
-            const tipMsg = "【💡 手动启动小程序登录说明】\\n\\n" +
+            const tipMsg = "【💡 小程序登录说明】\\n\\n" +
                 "1. 电脑桌面必须已有【厦大体育】快捷方式图标（.lnk），系统才能自动唤起；\\n" +
                 "2. 启动后请确保电脑微信处于登录状态；\\n" +
                 "3. 请在打开的小程序主页面中点击【场馆预约】；\\n" +
                 "4. 获取登录凭证后系统会自动关闭小程序并刷新页面。\\n\\n" +
                 "是否立即启动？";
-            if (!await customConfirm(tipMsg, "手动启动小程序登录说明", {{ confirmText: "立即启动小程序", cancelText: "我再看看" }})) return;
+            if (!await customConfirm(tipMsg, "小程序登录说明", {{ confirmText: "立即启动小程序", cancelText: "取消" }})) return;
             showToast("⏳ 正在唤起小程序，请在窗口中登录并点击【场馆预约】...", true);
             try {{
                 const r = await fetch('/api/harvest', {{
@@ -2888,21 +2888,21 @@ def render_dashboard(data: dict) -> str:
                 }});
                 const data = await r.json();
                 if (data.success) {{
-                    await customAlert("登录凭证获取成功！新会话已生效，页面即将刷新。", "success", "🎉 登录成功");
+                    await customAlert("登录成功，页面即将刷新。", "success", "🎉 登录成功");
                     location.reload();
                 }} else {{
-                    await customAlert(data.info || "请确认电脑桌面有【厦大体育】快捷方式、微信已登录并点击了【场馆预约】", "error", "凭证获取未成功");
+                    await customAlert(data.info || "请确认电脑桌面有【厦大体育】快捷方式、微信已登录并点击了【场馆预约】", "error", "小程序登录未完成");
                 }}
             }} catch(e) {{
-                await customAlert("请求出错: " + e, "error");
+                await customAlert("操作未完成，请检查网络后重试", "error");
             }}
         }}
 
         async function bookSlot(intervalId, date, timeRange, targetBtn = null) {{
-            // 准确获取被点击的立刻预约按钮，必须在 await customConfirm 之前获取，绝不能在 await 之后使用 window.event.target
+            // 准确获取被点击的立即预约按钮，必须在 await customConfirm 之前获取，绝不能在 await 之后使用 window.event.target
             const originBtn = targetBtn || (window.event && window.event.target ? (window.event.target.closest('.btn-book') || (window.event.target.classList.contains('btn-book') ? window.event.target : null)) : null);
 
-            if (!await customConfirm(`确认立即抢购【${{date}} ${{timeRange}}】的健身房名额吗？`, "预约确认", {{ confirmText: "立即抢购", cancelText: "取消" }})) return;
+            if (!await customConfirm(`确认预约【${{date}} ${{timeRange}}】的健身房名额吗？`, "预约确认", {{ confirmText: "提交预约", cancelText: "取消" }})) return;
 
             let originText = "";
             if (originBtn) {{
@@ -2919,12 +2919,12 @@ def render_dashboard(data: dict) -> str:
                 }});
                 const res = await r.json();
                 if (res.success) {{
-                    await customAlert(res.info || '场地名额已锁定！请按时前往锻炼。', "success", "🎉 恭喜您预约成功！");
+                    await customAlert(res.info || '预约成功，请按预约时间到场。', "success", "🎉 预约成功");
                     location.reload();
                 }} else {{
                     // 如果提示凭证失效，先尝试纯 HTTP 自动续期并重试
                     if (res.need_harvest || (res.info && (res.info.includes("登录") || res.info.includes("过期") || res.info.includes("失效")))) {{
-                        showToast("⚠️ 凭证失效，正在尝试纯 HTTP 自动续期并重新下单...", true);
+                        showToast("⚠️ 登录已过期，正在尝试重新登录并再次提交预约...", true);
                         try {{
                             const relR = await fetch('/api/relogin', {{
                                 method: 'POST',
@@ -2932,11 +2932,11 @@ def render_dashboard(data: dict) -> str:
                             }});
                             const rel = await relR.json();
                             if (rel.success) {{
-                                showToast("🎉 续期成功，正在重新提交预约...", true);
+                                showToast("🎉 已重新登录，正在提交预约...", true);
                                 setTimeout(() => bookSlot(intervalId, date, timeRange, originBtn), 600);
                                 return;
                             }} else {{
-                                if (await customConfirm("快速续登未成功，是否启动小程序进行手动登录？", "凭证失效提醒", {{ confirmText: "启动小程序", cancelText: "取消" }})) {{
+                                if (await customConfirm("自动重新登录未成功，是否通过小程序登录？", "登录已过期", {{ confirmText: "启动小程序", cancelText: "取消" }})) {{
                                     harvestSession();
                                     return;
                                 }}
@@ -2947,21 +2947,21 @@ def render_dashboard(data: dict) -> str:
                         originBtn.disabled = false;
                         originBtn.innerText = originText;
                     }}
-                    await customAlert(res.info || '名额已被抢完或网络异常', "warning", "预约未成功");
+                    await customAlert(res.info || '预约未完成，请刷新场次余量后重试；如提交结果未知，请先核对预约记录', "warning", "预约未成功");
                 }}
             }} catch(err) {{
                 if (originBtn) {{
                     originBtn.disabled = false;
                     originBtn.innerText = originText;
                 }}
-                await customAlert("请求发生异常: " + err, "error");
+                await customAlert("预约提交结果未知，请先核对预约记录，再决定是否重试", "error");
             }}
         }}
 
         function copyHwidCode(code) {{
             if (navigator.clipboard && navigator.clipboard.writeText) {{
                 navigator.clipboard.writeText(code).then(() => {{
-                    showToast("🎉 机器码已成功复制到剪贴板！");
+                    showToast("🎉 设备识别码已复制");
                 }}).catch(() => {{
                     _fallbackCopyHwid(code);
                 }});
@@ -2975,7 +2975,7 @@ def render_dashboard(data: dict) -> str:
             if (input) {{
                 input.select();
                 document.execCommand("copy");
-                showToast("🎉 机器码已复制！");
+                showToast("🎉 设备识别码已复制");
             }}
         }}
 
@@ -2985,7 +2985,7 @@ def render_dashboard(data: dict) -> str:
             const btn = document.getElementById("btnSubmitActivation");
             if (btn) {{
                 btn.disabled = false;
-                btn.innerText = "🚀 立即验证并激活";
+                btn.innerText = "🚀 激活";
             }}
         }}
 
@@ -2995,7 +2995,7 @@ def render_dashboard(data: dict) -> str:
             const btn = document.getElementById("btnSubmitActivation");
             if (btn) {{
                 btn.disabled = false;
-                btn.innerText = "🚀 立即验证并激活";
+                btn.innerText = "🚀 激活";
             }}
         }}
 
@@ -3006,7 +3006,7 @@ def render_dashboard(data: dict) -> str:
             reader.onload = function(evt) {{
                 const input = document.getElementById("licenseCodeInput");
                 if (input) input.value = evt.target.result.trim();
-                showToast("📁 授权文件内容已成功载入！请点击【立即验证并激活】");
+                showToast("📁 授权文件已导入，请点击【激活】");
             }};
             reader.readAsText(file);
         }}
@@ -3027,11 +3027,11 @@ def render_dashboard(data: dict) -> str:
 
             if (btn) {{
                 btn.disabled = true;
-                btn.innerText = "⏳ 正在校验数字签名...";
+                btn.innerText = "⏳ 正在验证激活信息...";
             }}
             if (feedback) {{
                 feedback.style.color = "#2563eb";
-                feedback.innerText = "正在校验授权合法性与机器码指纹...";
+                feedback.innerText = "正在验证激活信息...";
             }}
 
             try {{
@@ -3057,17 +3057,17 @@ def render_dashboard(data: dict) -> str:
                     }}
                     if (btn) {{
                         btn.disabled = false;
-                        btn.innerText = "🚀 立即验证并激活";
+                        btn.innerText = "🚀 激活";
                     }}
                 }}
             }} catch (err) {{
                 if (feedback) {{
                     feedback.style.color = "#dc2626";
-                    feedback.innerText = "❌ 请求异常: " + err.message;
+                    feedback.innerText = "激活请求失败，请检查网络后重试";
                 }}
                 if (btn) {{
                     btn.disabled = false;
-                    btn.innerText = "🚀 立即验证并激活";
+                    btn.innerText = "🚀 激活";
                 }}
             }}
         }}
@@ -3155,14 +3155,14 @@ def render_dashboard(data: dict) -> str:
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid #f1f5f9; padding-bottom: 12px;">
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <span style="font-size: 22px;">🔒</span>
-                    <h3 style="margin: 0; font-size: 17px; font-weight: 700; color: #0f172a;">软件授权与激活中心</h3>
+                    <h3 style="margin: 0; font-size: 17px; font-weight: 700; color: #0f172a;">软件激活</h3>
                 </div>
                 <button type="button" onclick="closeLicenseModal()" style="background: none; border: none; font-size: 22px; color: #94a3b8; cursor: pointer; padding: 4px; line-height: 1;">&times;</button>
             </div>
 
             <div style="margin-bottom: 16px;">
                 <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">
-                    💻 本机唯一设备机器码 (HWID):
+                    💻 设备识别码:
                 </label>
                 <div style="display: flex; gap: 8px;">
                     <input type="text" id="hwidDisplayInput" value="{hwid}" readonly class="form-input" style="font-family: monospace; font-size: 14px; font-weight: 700; text-align: center; background: #f8fafc; letter-spacing: 1px; color: #1e293b;">
@@ -3171,19 +3171,19 @@ def render_dashboard(data: dict) -> str:
                     </button>
                 </div>
                 <p style="font-size: 12px; color: #64748b; margin-top: 6px; line-height: 1.5;">
-                    💡 本软件已启用“一机一码”硬件绑定防护。请点击【一键复制】机器码，发送给作者获取您的专属授权文件 (license.lic) 或激活码。
+                    💡 激活信息与当前设备绑定。请复制设备识别码，发送给作者以获取激活码或授权文件（license.lic）。
                 </p>
             </div>
 
             <div style="margin-bottom: 16px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                    <label style="font-size: 13px; font-weight: 700; color: #334155;">🔑 粘贴文本激活码 或 导入文件：</label>
+                    <label style="font-size: 13px; font-weight: 700; color: #334155;">🔑 输入激活码或导入授权文件：</label>
                     <label class="btn-action" style="cursor: pointer; font-size: 12px; padding: 4px 10px; display: inline-flex; align-items: center; gap: 4px;">
                         📁 导入 license.lic
                         <input type="file" accept=".lic,.txt,.json" style="display: none;" onchange="handleLicenseFileImport(event)">
                     </label>
                 </div>
-                <textarea id="licenseCodeInput" placeholder="请在此处直接粘贴作者微信发给您的长串激活码文本，或者点击上方【导入 license.lic】文件..." rows="3" class="form-input" style="font-family: monospace; font-size: 12px; resize: vertical; line-height: 1.4;"></textarea>
+                <textarea id="licenseCodeInput" placeholder="请粘贴激活码，也可点击上方按钮导入 license.lic 授权文件" rows="3" class="form-input" style="font-family: monospace; font-size: 12px; resize: vertical; line-height: 1.4;"></textarea>
             </div>
 
             <div id="licenseFeedbackMsg" style="margin-bottom: 14px; font-size: 13px; text-align: center; min-height: 20px; font-weight: 600;"></div>
@@ -3191,7 +3191,7 @@ def render_dashboard(data: dict) -> str:
             <div style="display: flex; gap: 10px;">
                 <button type="button" class="btn-action" onclick="closeLicenseModal()" style="flex: 1; padding: 9px;">关闭</button>
                 <button type="button" id="btnSubmitActivation" class="dialog-btn-confirm success" onclick="submitLicenseActivation()" style="flex: 2; padding: 9px; font-size: 14px; font-weight: 700; border-radius: 8px; cursor: pointer; border: none;">
-                    🚀 立即验证并激活
+                    🚀 激活
                 </button>
             </div>
         </div>
@@ -3206,7 +3206,7 @@ def render_qr_login_page(is_already_logged_in: bool = False, phpsessid_masked: s
     if is_already_logged_in:
         already_in_banner = f"""
         <div style="background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; padding: 10px 18px; border-radius: 10px; margin-bottom: 20px; font-size: 13px; text-align: center;">
-            ✨ 当前系统已存活有效登录态 <strong>({_html(phpsessid_masked)})</strong>，您可以直接 
+            ✨ 您已登录，可以直接
             <a href="/" style="color: #047857; font-weight: 700; text-decoration: underline; margin-left: 4px;">进入预约大厅 →</a>
         </div>
         """
@@ -3216,7 +3216,7 @@ def render_qr_login_page(is_already_logged_in: bool = False, phpsessid_masked: s
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>厦门大学统一身份认证 · 企业微信扫码登录</title>
+    <title>体育馆预约助手 · 登录</title>
     <style>
         :root {{
             --primary: #0f4c81;
@@ -3427,8 +3427,8 @@ def render_qr_login_page(is_already_logged_in: bool = False, phpsessid_masked: s
 <body>
     <div class="container">
         <div class="header">
-            <h1>厦门大学统一身份认证</h1>
-            <p>企业微信扫码登录 · 凭证自动置换与预约直通</p>
+            <h1>体育馆预约助手</h1>
+            <p>使用厦门大学统一身份认证账号或企业微信扫码登录</p>
         </div>
         <div class="content">
             {already_in_banner}
@@ -3441,12 +3441,12 @@ def render_qr_login_page(is_already_logged_in: bool = False, phpsessid_masked: s
             <!-- 状态胶囊 -->
             <div class="status-badge scanning" id="statusBadge">
                 <span class="pulse-dot"></span>
-                <span id="statusText">正在向统一认证中心申请 UUID...</span>
+                <span id="statusText">正在加载登录二维码...</span>
             </div>
 
             <p class="tips" id="instructionTip">
                 请打开手机上的 <strong>企业微信 APP</strong>，点击右上角【+】→【扫一扫】扫描上方二维码。<br>
-                扫码后在手机端点击<strong>【确认登录】</strong>，系统将自动换发凭据并进入预约大厅。
+                扫码后在手机端点击<strong>【确认登录】</strong>，登录完成后将进入预约大厅。
             </p>
 
             <button class="refresh-btn" id="refreshBtn" onclick="refreshQr()" style="display: none;">
@@ -3461,7 +3461,7 @@ def render_qr_login_page(is_already_logged_in: bool = False, phpsessid_masked: s
                 <input name="password" id="pwPass" type="password" placeholder="密码" autocomplete="current-password" required
                        style="width: 100%; box-sizing: border-box; padding: 9px 12px; margin-bottom: 8px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px;">
                 <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #475569; margin-bottom: 10px;">
-                    <input type="checkbox" id="pwRemember" checked> 保存账号密码，登录失效时自动重新登录
+                    <input type="checkbox" id="pwRemember" checked> 在本机保存账号密码，用于自动重新登录
                 </label>
                 <button type="submit" class="refresh-btn" id="pwBtn" style="width: 100%; margin-top: 0; background: var(--primary); color: #fff; border-color: var(--primary);">
                     🔑 账号密码登录
@@ -3472,12 +3472,12 @@ def render_qr_login_page(is_already_logged_in: bool = False, phpsessid_masked: s
             <!-- 成功跳转区 -->
             <div class="success-card" id="successCard">
                 <div style="font-size: 18px; font-weight: 700; color: #166534; margin-bottom: 6px;">
-                    🎉 登录授权成功！
+                    登录成功
                 </div>
                 <div style="font-size: 13px; color: #15803d; margin-bottom: 12px;">
-                    全套凭据已成功提取并写入配置文件，正在为您跳转至体育馆预约界面...
+                    登录成功，正在进入预约大厅...
                 </div>
-                <div id="countdownTip" style="font-size: 12px; color: #4ade80;">即刻跳转中 (1s)...</div>
+                <div id="countdownTip" style="font-size: 12px; color: #4ade80;">正在跳转...</div>
                 <a href="/" class="btn-enter">🏋️ 立即进入预约大厅</a>
             </div>
 
@@ -3507,7 +3507,7 @@ def render_qr_login_page(is_already_logged_in: bool = False, phpsessid_masked: s
             document.getElementById("qrBox").style.display = "flex";
             document.getElementById("instructionTip").style.display = "block";
             document.getElementById("refreshBtn").style.display = "none";
-            updateStatus("scanning", "正在向统一认证中心申请 UUID...");
+            updateStatus("scanning", "正在加载登录二维码...");
 
             try {{
                 const res = await fetch("/api/qr", {{method: "POST", headers: {{"Content-Type": "application/json"}}}});
@@ -3521,7 +3521,7 @@ def render_qr_login_page(is_already_logged_in: bool = False, phpsessid_masked: s
                     document.getElementById("refreshBtn").style.display = "inline-block";
                 }}
             }} catch (err) {{
-                updateStatus("expired", "连接服务器异常: " + err.message);
+                updateStatus("expired", "连接失败，请检查网络后重试");
                 document.getElementById("refreshBtn").style.display = "inline-block";
             }}
         }}
@@ -3551,14 +3551,14 @@ def render_qr_login_page(is_already_logged_in: bool = False, phpsessid_masked: s
                         if (data.logged_in) {{
                             handleSuccess(data.data);
                         }} else {{
-                            updateStatus("success", data.desc || "授权成功！正在换取 Token...");
+                            updateStatus("success", data.desc || "扫码已确认，正在完成登录...");
                         }}
                     }} else if (data.code === "3") {{
                         updateStatus("expired", "二维码已过期失效，请点击刷新");
                         clearInterval(pollTimer);
                         document.getElementById("refreshBtn").style.display = "inline-block";
                     }} else if (data.code === "error") {{
-                        updateStatus("expired", data.desc || "凭据换发异常");
+                        updateStatus("expired", data.desc || "登录未完成，请刷新二维码后重试");
                         clearInterval(pollTimer);
                         document.getElementById("refreshBtn").style.display = "inline-block";
                     }}
@@ -3571,7 +3571,7 @@ def render_qr_login_page(is_already_logged_in: bool = False, phpsessid_masked: s
         function handleSuccess(resData) {{
             isCompleted = true;
             clearInterval(pollTimer);
-            updateStatus("success", "🎉 登录成功！凭据已就绪");
+            updateStatus("success", "🎉 登录成功");
             
             document.getElementById("qrBox").style.display = "none";
             document.getElementById("instructionTip").style.display = "none";
@@ -3595,7 +3595,7 @@ def render_qr_login_page(is_already_logged_in: bool = False, phpsessid_masked: s
             const msg = document.getElementById("pwMsg");
             btn.disabled = true;
             msg.style.color = "#475569";
-            msg.innerText = "正在登录统一身份认证，识别验证码中...";
+            msg.innerText = "正在登录，请稍候...";
             try {{
                 const res = await fetch("/api/pw_login", {{
                     method: "POST",
@@ -3617,7 +3617,7 @@ def render_qr_login_page(is_already_logged_in: bool = False, phpsessid_masked: s
                 }}
             }} catch (e) {{
                 msg.style.color = "#b91c1c";
-                msg.innerText = "请求异常: " + e.message;
+                msg.innerText = "连接失败，请检查网络后重试";
             }} finally {{
                 btn.disabled = false;
             }}

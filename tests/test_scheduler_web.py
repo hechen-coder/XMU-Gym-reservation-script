@@ -92,6 +92,7 @@ class TestSchedulerWeb(unittest.TestCase):
         self.assertIn("手动", res["info"])
 
     def test_scheduler_manager_lifecycle(self):
+        save_target_and_scheduler_config(self.config_path, {}, {"target_time": "17:05:00"})
         mgr = SchedulerManager()
         status = mgr.get_status()
         self.assertFalse(status["running"])
@@ -110,6 +111,9 @@ class TestSchedulerWeb(unittest.TestCase):
             start_res = mgr.start(self.config_path)
             self.assertTrue(start_res["success"])
             self.assertTrue(mgr.get_status()["running"])
+            self.assertIn("17:05:00", start_res["info"])
+            self.assertIn(start_res["status"]["next_run_dt"], start_res["info"])
+            self.assertIn("等待执行", start_res["status"]["status_text"])
 
             stop_res = mgr.stop()
             self.assertTrue(stop_res["success"])
@@ -169,16 +173,16 @@ class TestSchedulerWeb(unittest.TestCase):
         }
         html = render_dashboard(data)
         self.assertIn("定时预约", html)
-        self.assertIn("捡漏监听", html)
+        self.assertIn("余量监测", html)
         self.assertIn("feature-bar", html)
         self.assertIn("featureSchedBtn", html)
         self.assertIn("featureSnipeBtn", html)
         self.assertIn("schedulerModal", html)
         self.assertIn("snipeModal", html)
         self.assertIn("● 登录有效", html)
-        self.assertIn("自动刷新(30s)", html)
+        self.assertIn("每 30 秒刷新", html)
         self.assertIn("重新登录", html)
-        self.assertIn("默认定时预约当天早上 07:00:00 开放的第二天的健身房名额", html)
+        self.assertIn("默认于每天 07:00 尝试预约次日场次", html)
         self.assertNotIn("系统将在抢票前 5 分钟", html)
         self.assertNotIn("防休眠守护", html)
         self.assertIn("翔安校区健身房", html)
@@ -238,14 +242,14 @@ class TestSchedulerWeb(unittest.TestCase):
         data_running = dict(data)
         data_running["scheduler_status"] = {"running": True, "status_text": "正在静默休眠等待"}
         html_running = render_dashboard(data_running)
-        self.assertIn("定时预约中", html_running)
+        self.assertIn("定时任务已开启", html_running)
         self.assertIn("bookingInfoCard", html_running)
 
         # 3. Running state for snipe
         data_snipe = dict(data)
         data_snipe["snipe_status"] = {"running": True, "status_text": "正在高频轮询探测", "poll_count": 42}
         html_snipe = render_dashboard(data_snipe)
-        self.assertIn("正在捡漏中", html_snipe)
+        self.assertIn("余量监测中", html_snipe)
         self.assertIn("snipeInfoCard", html_snipe)
         self.assertIn("42 次", html_snipe)
 

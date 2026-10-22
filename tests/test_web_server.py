@@ -15,8 +15,8 @@ class TestWebServer(unittest.TestCase):
             "groups": []
         }
         html = render_dashboard(data)
-        self.assertIn("当前登录凭证已失效", html)
-        self.assertIn("手动输入 Token", html)
+        self.assertIn("当前未登录或登录已过期", html)
+        self.assertIn("手动填写登录凭证", html)
         self.assertIn("setManualToken", html)
 
     @patch("xdty_booking.web.server.save_phpsessid")
@@ -52,8 +52,8 @@ class TestWebServer(unittest.TestCase):
             "groups": []
         }
         html = render_dashboard(data)
-        self.assertIn("当前登录凭证已失效", html)
-        self.assertIn("HTTP 自动续登", html)
+        self.assertIn("当前未登录或登录已过期", html)
+        self.assertIn("尝试重新登录", html)
         self.assertIn("reloginSession", html)
 
     @patch("xdty_booking.web.server.load_config")
@@ -121,7 +121,7 @@ class TestWebServer(unittest.TestCase):
         }
         html = render_dashboard(data)
         self.assertIn("const IS_SESSION_VALID = false;", html)
-        self.assertIn("🔑 手动登录", html)
+        self.assertIn("🔑 小程序登录", html)
         self.assertIn(".lnk", html)
         self.assertIn("场馆预约", html)
     def test_render_dashboard_modal_and_book_slot_safeguards(self):

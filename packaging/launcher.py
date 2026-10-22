@@ -583,7 +583,7 @@ def launch_desktop_window(port: int = 8080):
                 from System.Windows.Forms import MessageBox, MessageBoxButtons, MessageBoxIcon, DialogResult, ToolTipIcon
                 res = MessageBox.Show(
                     "是否缩小至系统托盘并在后台保持待命？\n\n"
-                    "【是 (Yes)】：缩小至托盘（推荐，后台早 7 点抢票与捡漏服务继续运行）\n"
+                    "【是 (Yes)】：最小化到托盘（程序继续运行，已开启的定时任务和余量监测继续执行）\n"
                     "【否 (No)】 ：彻底退出程序（终止所有后台守护服务）\n"
                     "【取消】    ：取消本次操作，继续留在主界面",
                     "厦大体育馆自动预约工具",
@@ -598,7 +598,7 @@ def launch_desktop_window(port: int = 8080):
                             tray.ShowBalloonTip(
                                 3000,
                                 "厦大体育馆预约助手",
-                                "已缩小至系统托盘待命，后台抢票与捡漏服务将继续生效。\n左键单击或双击托盘图标可重新呼出主界面。",
+                                "已最小化到系统托盘，已开启的任务继续运行。\n单击或双击托盘图标可打开主界面。",
                                 ToolTipIcon.Info
                             )
                         except Exception:

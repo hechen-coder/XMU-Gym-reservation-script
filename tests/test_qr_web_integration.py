@@ -15,8 +15,8 @@ class TestQrWebIntegration(unittest.TestCase):
 
     def test_render_qr_login_page_already_logged_in(self):
         html = render_qr_login_page(is_already_logged_in=True, phpsessid_masked="abcd1234***")
-        self.assertIn("abcd1234***", html)
-        self.assertIn("当前系统已存活有效登录态", html)
+        self.assertNotIn("abcd1234***", html)
+        self.assertIn("您已登录", html)
         self.assertIn("进入预约大厅", html)
 
     def test_render_dashboard_has_qr_login_button(self):
