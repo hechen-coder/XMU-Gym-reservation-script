@@ -124,3 +124,26 @@ def test_handle_my_orders_sets_client_token(monkeypatch):
         mock_client_instance.set_session_token.assert_called_with("my_token_888")
 
 
+
+
+def test_heartbeat_silent_healing_never_sends_notification():
+    """日常后台心跳监控遵循静默原则，无论是自愈成功还是失败，均不调用 notifier 发送通知"""
+    from unittest.mock import Mock, patch
+    import time
+
+    api = Mock()
+    # 模拟失效
+    api.my_subscribe.return_value = {"status": 0, "info": "登录信息失效"}
+    mgr = SessionManager(api, phpsessid="expired_token")
+
+    mock_notifier = Mock()
+    # 模拟自愈成功
+    with patch.object(mgr, "renew_or_fallback", return_value="new_token_123"):
+        mgr._running = True
+        # 单次循环后立即停止
+        def stop_after_one(*a, **k):
+            mgr._running = False
+        with patch("time.sleep", side_effect=stop_after_one):
+            mgr.heartbeat_loop(interval_seconds=1, notifier=mock_notifier)
+
+    mock_notifier.send.assert_not_called()

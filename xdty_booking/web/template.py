@@ -39,6 +39,7 @@ def render_dashboard(data: dict) -> str:
     is_session_valid = data.get("session_valid", True)
     has_auth_params = data.get("has_auth_params", False)
     phpsessid_masked = _html(data.get("phpsessid", ""))
+    cas_username = _html(data.get("cas_username", ""))
 
     scheduler_status = data.get("scheduler_status", {})
     target_config = data.get("target_config", {})
@@ -222,7 +223,7 @@ def render_dashboard(data: dict) -> str:
                         请先登录以查看场地与预约
                     </div>
                     <div style="font-size: 13px; color: #64748b; margin-bottom: 20px; line-height: 1.5;">
-                        当前登录凭证已失效或未登录，请使用手机【企业微信】扫一扫直接登录
+                        当前登录凭证已失效或未登录，请使用手机【企业微信】扫码或账号密码直接登录
                     </div>
 
                     <!-- 居中内嵌二维码 -->
@@ -243,6 +244,22 @@ def render_dashboard(data: dict) -> str:
                             📱 全屏扫码页面
                         </a>
                     </div>
+
+                    <!-- 账号密码登录区 -->
+                    <form id="inlinePwForm" onsubmit="return inlinePwLogin(event)" style="margin: 22px auto 0; max-width: 320px; text-align: left;">
+                        <div style="text-align: center; font-size: 12px; color: #94a3b8; margin-bottom: 10px;">—— 或使用统一身份认证账号密码登录 ——</div>
+                        <input name="username" id="inlinePwUser" value="{cas_username}" placeholder="学号 / 工号" autocomplete="username" required
+                               style="width: 100%; box-sizing: border-box; padding: 9px 12px; margin-bottom: 8px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px;">
+                        <input name="password" id="inlinePwPass" type="password" placeholder="密码" autocomplete="current-password" required
+                               style="width: 100%; box-sizing: border-box; padding: 9px 12px; margin-bottom: 8px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px;">
+                        <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #475569; margin-bottom: 10px; cursor: pointer;">
+                            <input type="checkbox" id="inlinePwRemember" checked style="cursor: pointer;"> 保存账号密码，登录失效时自动重新登录
+                        </label>
+                        <button type="submit" class="btn-action btn-primary" id="inlinePwBtn" style="width: 100%; margin-top: 0; padding: 10px; font-size: 14px; font-weight: 600; border-radius: 8px; cursor: pointer;">
+                            🔑 账号密码登录
+                        </button>
+                        <div id="inlinePwMsg" style="font-size: 12px; color: #b91c1c; margin-top: 8px; min-height: 16px; text-align: center;"></div>
+                    </form>
 
                     <!-- 更多选项折叠（避免干扰普通使用者） -->
                     <details style="margin-top: 24px; border-top: 1px dashed #e2e8f0; padding-top: 14px; text-align: center;">
@@ -1778,14 +1795,17 @@ def render_dashboard(data: dict) -> str:
             if (qrStatus) qrStatus.innerText = "正在获取企业微信登录二维码...";
 
             try {{
-                const res = await fetch("/api/qr");
+                const res = await fetch("/api/qr", {{
+                    method: "POST",
+                    headers: {{"Content-Type": "application/json"}}
+                }});
                 const data = await res.json();
                 if (data.success) {{
                     qrImg.src = data.qr_image;
                     if (qrStatus) qrStatus.innerText = "请使用手机企业微信扫一扫";
                     startInlinePolling();
                 }} else {{
-                    if (qrStatus) qrStatus.innerText = "获取失败: " + (data.error || "网络异常");
+                    if (qrStatus) qrStatus.innerText = "获取失败: " + (data.error || data.info || "网络异常");
                     if (refBtn) refBtn.style.display = "inline-block";
                 }}
             }} catch (err) {{
@@ -1800,7 +1820,10 @@ def render_dashboard(data: dict) -> str:
                 const qrStatus = document.getElementById("inlineQrStatus");
                 const refBtn = document.getElementById("inlineRefreshBtn");
                 try {{
-                    const res = await fetch("/api/qr_status");
+                    const res = await fetch("/api/qr_status", {{
+                        method: "POST",
+                        headers: {{"Content-Type": "application/json"}}
+                    }});
                     const data = await res.json();
                     if (data.code === "0") {{
                         if (qrStatus) qrStatus.innerText = "等待手机企业微信扫码...";
@@ -1822,6 +1845,74 @@ def render_dashboard(data: dict) -> str:
                     }}
                 }} catch(e) {{}}
             }}, 1200);
+        }}
+
+        async function inlinePwLogin(ev) {{
+            ev.preventDefault();
+            const btn = document.getElementById("inlinePwBtn");
+            const msg = document.getElementById("inlinePwMsg");
+            const usernameInput = document.getElementById("inlinePwUser");
+            const passwordInput = document.getElementById("inlinePwPass");
+            const rememberInput = document.getElementById("inlinePwRemember");
+
+            const username = usernameInput ? usernameInput.value.trim() : "";
+            const password = passwordInput ? passwordInput.value : "";
+            const remember = rememberInput ? rememberInput.checked : true;
+
+            if (!username || !password) {{
+                if (msg) {{
+                    msg.style.color = "#b91c1c";
+                    msg.innerText = "请填写账号和密码";
+                }}
+                return false;
+            }}
+
+            if (btn) {{
+                btn.disabled = true;
+                btn.innerText = "⏳ 正在登录统一身份认证...";
+            }}
+            if (msg) {{
+                msg.style.color = "#475569";
+                msg.innerText = "正在登录统一身份认证，识别验证码中...";
+            }}
+
+            try {{
+                const res = await fetch("/api/pw_login", {{
+                    method: "POST",
+                    headers: {{"Content-Type": "application/json"}},
+                    body: JSON.stringify({{
+                        username: username,
+                        password: password,
+                        remember: remember
+                    }})
+                }});
+                const data = await res.json();
+                if (data.success) {{
+                    if (inlinePollTimer) clearInterval(inlinePollTimer);
+                    if (msg) {{
+                        msg.style.color = "#16a34a";
+                        msg.innerText = "🎉 登录成功！正在加载场地与预约数据...";
+                    }}
+                    showToast("🎉 登录成功！正在加载场地...", true);
+                    setTimeout(() => location.reload(), 900);
+                }} else {{
+                    if (msg) {{
+                        msg.style.color = "#b91c1c";
+                        msg.innerText = data.error || data.info || "登录失败，请检查账号、密码或网络";
+                    }}
+                }}
+            }} catch (e) {{
+                if (msg) {{
+                    msg.style.color = "#b91c1c";
+                    msg.innerText = "请求异常: " + e.message;
+                }}
+            }} finally {{
+                if (btn) {{
+                    btn.disabled = false;
+                    btn.innerText = "🔑 账号密码登录";
+                }}
+            }}
+            return false;
         }}
 
         const IS_SESSION_VALID = {"true" if is_session_valid else "false"};
@@ -3109,7 +3200,7 @@ def render_dashboard(data: dict) -> str:
 </html>
 """
 
-def render_qr_login_page(is_already_logged_in: bool = False, phpsessid_masked: str = "") -> str:
+def render_qr_login_page(is_already_logged_in: bool = False, phpsessid_masked: str = "", cas_username: str = "") -> str:
     """生成企业微信扫码登录页面，手机扫码授权后自动置换凭证并跳转预约大厅"""
     already_in_banner = ""
     if is_already_logged_in:
@@ -3365,7 +3456,7 @@ def render_qr_login_page(is_already_logged_in: bool = False, phpsessid_masked: s
             <!-- 账号密码登录区 -->
             <form id="pwForm" onsubmit="return pwLogin(event)" style="margin: 22px auto 0; max-width: 320px; text-align: left;">
                 <div style="text-align: center; font-size: 12px; color: #94a3b8; margin-bottom: 10px;">—— 或使用统一身份认证账号密码登录 ——</div>
-                <input name="username" id="pwUser" placeholder="学号 / 工号" autocomplete="username" required
+                <input name="username" id="pwUser" value="{_html(cas_username)}" placeholder="学号 / 工号" autocomplete="username" required
                        style="width: 100%; box-sizing: border-box; padding: 9px 12px; margin-bottom: 8px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px;">
                 <input name="password" id="pwPass" type="password" placeholder="密码" autocomplete="current-password" required
                        style="width: 100%; box-sizing: border-box; padding: 9px 12px; margin-bottom: 8px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px;">

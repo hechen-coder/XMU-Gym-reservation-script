@@ -500,6 +500,7 @@ def query_gym_status(config_path: Optional[str] = None, auto_heal: bool = True) 
         "session_valid": is_session_valid,
         "has_auth_params": has_auth_params,
         "phpsessid": f"{cfg.auth.phpsessid[:8]}***" if cfg.auth.phpsessid else "",
+        "cas_username": getattr(cfg.auth, "cas_username", "") or "",
         "info": info_msg,
         "date_list": [],
         "groups": [],
@@ -726,6 +727,9 @@ class GymStatusHandler(BaseHTTPRequestHandler):
         if parsed.path in ("/api/qr_status", "/api/qr/status"):
             self._handle_qr_status()
             return
+        if parsed.path.startswith("/api/pw_login"):
+            self._handle_pw_login(body_json)
+            return
 
         # 针对打包客户端发布版的业务 API 强控守卫拦截 (开发模式自动放行)
         auth_res = check_license()
@@ -742,8 +746,6 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             self._handle_book(params)
         elif parsed.path.startswith("/api/relogin"):
             self._handle_relogin()
-        elif parsed.path.startswith("/api/pw_login"):
-            self._handle_pw_login(body_json)
         elif parsed.path.startswith("/api/set_token"):
             self._handle_set_token(params)
         elif parsed.path.startswith("/api/scheduler/start"):
@@ -771,6 +773,7 @@ class GymStatusHandler(BaseHTTPRequestHandler):
 
     def _handle_pw_login(self, body: dict):
         """统一身份认证账号密码登录；remember=true 时保存账号密码供失效后自动重新登录"""
+        global _LAST_SESSION_VALID_TIME, _LAST_SESSION_VALID_TOKEN
         username = body.get("username")
         password = body.get("password")
         if not isinstance(username, str) or not isinstance(password, str) or len(username) > 128 or len(password) > 256:
@@ -785,15 +788,23 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             c_path = _ensure_config_path(_GLOBAL_CONFIG_PATH)
             if res.get("phpsessid"):
                 save_phpsessid(c_path, res["phpsessid"])
+                _LAST_SESSION_VALID_TIME = time.time()
+                _LAST_SESSION_VALID_TOKEN = res["phpsessid"]
             if res.get("auth_params"):
                 save_auth_params(c_path, res["auth_params"])
             if body.get("remember"):
                 save_cas_credentials(c_path, username, password)
             logger.info(f"💾 账号密码登录凭据已持久化回写至配置文件: {c_path}")
-            self._send_json(200, {"success": True, "logged_in": True})
+            self._send_json(200, {"success": True, "logged_in": True, "data": res})
         except Exception as e:
-            logger.error("账号密码登录失败: %s", type(e).__name__)
-            message = "用户名或者密码有误" if "用户名或者密码有误" in str(e) else "登录失败，请检查账号、验证码或网络后重试"
+            logger.error("账号密码登录失败: %s", e)
+            err_str = str(e)
+            if "用户名或者密码有误" in err_str or "非正常账号" in err_str or "用户名不存在" in err_str:
+                message = "用户名或密码错误，请核对后重试"
+            elif "验证码" in err_str:
+                message = f"验证码识别或校验失败: {err_str}"
+            else:
+                message = f"登录失败: {err_str}"
             self._send_json(200, {"success": False, "logged_in": False, "error": message})
 
     def _handle_harvest(self):
@@ -1266,6 +1277,9 @@ class GymStatusHandler(BaseHTTPRequestHandler):
 
                         if phpsessid:
                             save_phpsessid(c_path, phpsessid)
+                            global _LAST_SESSION_VALID_TIME, _LAST_SESSION_VALID_TOKEN
+                            _LAST_SESSION_VALID_TIME = time.time()
+                            _LAST_SESSION_VALID_TOKEN = phpsessid
                         if auth_params:
                             save_auth_params(c_path, auth_params)
                         logger.info(f"💾 凭据已成功自动持久化回写至配置文件: {c_path}")
@@ -1299,7 +1313,8 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             )
             alive = mgr.check_alive() if cfg.auth.phpsessid else False
             masked = f"{cfg.auth.phpsessid[:8]}***" if cfg.auth.phpsessid else ""
-            html = render_qr_login_page(is_already_logged_in=alive, phpsessid_masked=masked)
+            cas_username = getattr(cfg.auth, "cas_username", "") or ""
+            html = render_qr_login_page(is_already_logged_in=alive, phpsessid_masked=masked, cas_username=cas_username)
             self._send_html(200, html)
         except Exception as e:
             logger.error(f"渲染登录页面异常: {e}")
@@ -1311,13 +1326,21 @@ class GymStatusHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
-        if path in ("/api/book", "/api/relogin", "/api/set_token", "/api/harvest", "/api/campus/switch", "/api/qr", "/api/qr_status", "/api/qr/status", "/api/pw_login"):
+        if path in ("/api/book", "/api/relogin", "/api/set_token", "/api/harvest", "/api/campus/switch", "/api/pw_login"):
             self._send_json(405, {"success": False, "info": "请使用 POST"})
             return
 
         # 0. 授权状态查询专属 API
         if path.startswith("/api/license/status"):
             self._send_json(200, get_auth_status())
+            return
+
+        # 二维码与状态获取 (兼容 GET 请求)
+        if path == "/api/qr":
+            self._handle_qr_init()
+            return
+        if path in ("/api/qr_status", "/api/qr/status"):
+            self._handle_qr_status()
             return
 
         # 企业微信扫码登录页面
@@ -1385,11 +1408,13 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                 self._send_html(200, html)
             except Exception as e:
                 logger.error("加载页面异常: %s", type(e).__name__)
+                cas_user = ""
                 has_auth = False
                 try:
                     c_path = _ensure_config_path(_GLOBAL_CONFIG_PATH)
                     c = load_config(c_path)
                     has_auth = bool(getattr(c.auth, "auth_params", None) and c.auth.auth_params.get("token"))
+                    cas_user = getattr(c.auth, "cas_username", "") or ""
                 except Exception:
                     pass
                 fallback_data = {
@@ -1398,6 +1423,7 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                     "query_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "session_valid": False,
                     "has_auth_params": has_auth,
+                    "cas_username": cas_user,
                     "info": "系统连接或数据解析异常",
                     "groups": [],
                     "notify_config": {
@@ -1430,8 +1456,8 @@ def start_login_monitor(config_path: str) -> Optional[SessionManager]:
         client.set_session_token(cfg.auth.phpsessid)
     api = XdtyApi(client, uid=cfg.auth.uid or None)
     mgr = SessionManager(api, phpsessid=cfg.auth.phpsessid, auth_params=cfg.auth.auth_params, config_path=c_path)
-    mgr.start_heartbeat_daemon(interval_seconds=interval, notifier=Notifier(cfg.notify))
-    logger.info(f"🩺 登录状态监控已启动，每 {interval} 秒探活一次，失效将自动重登并通知")
+    mgr.start_heartbeat_daemon(interval_seconds=interval, notifier=None)
+    logger.info(f"🩺 登录状态监控已启动，每 {interval} 秒探活一次，失效将自动静默重登")
     return mgr
 
 

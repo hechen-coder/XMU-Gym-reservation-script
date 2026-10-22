@@ -100,7 +100,8 @@ def test_session_manager_renew_or_fallback():
         mock_fallback.assert_not_called()
 
     # 2. When check_login fails, fallback IS called
-    with patch.object(mgr, "refresh_session_via_check_login", return_value=None):
+    with patch.object(mgr, "refresh_session_via_check_login", return_value=None), \
+         patch.object(mgr, "refresh_session_via_password", return_value=None):
         res = mgr.renew_or_fallback()
         assert res == "harvester_cookie_999"
         mock_fallback.assert_called_once()

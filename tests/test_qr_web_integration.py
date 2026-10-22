@@ -99,3 +99,90 @@ class TestQrWebIntegration(unittest.TestCase):
         self.assertEqual(body["data"]["phpsessid"], "32charslongphpsessid123456789012")
         mock_save_php.assert_called_once()
         mock_save_auth.assert_called_once()
+
+    def test_render_dashboard_inline_qr_and_pw_login(self):
+        data = {
+            "stadium_name": "测试健身房",
+            "area_name": "二楼力量区",
+            "query_time": "2026-10-22 10:00:00",
+            "session_valid": False,
+            "cas_username": "2024123456",
+            "info": "登录信息失效",
+            "groups": []
+        }
+        html = render_dashboard(data)
+        # 1. 验证二维码区域及 POST 调用
+        self.assertIn("inlineQrImg", html)
+        self.assertIn("inlineQrStatus", html)
+        self.assertIn("inlineRefreshBtn", html)
+        self.assertIn('method: "POST"', html)
+        self.assertIn("/api/qr", html)
+        self.assertIn("/api/qr_status", html)
+
+        # 2. 验证统一身份认证账号密码登录子模块
+        self.assertIn("inlinePwForm", html)
+        self.assertIn("inlinePwUser", html)
+        self.assertIn("inlinePwPass", html)
+        self.assertIn("inlinePwRemember", html)
+        self.assertIn("inlinePwBtn", html)
+        self.assertIn("inlinePwMsg", html)
+        self.assertIn("2024123456", html)
+        self.assertIn("使用统一身份认证账号密码登录", html)
+        self.assertIn("inlinePwLogin", html)
+        self.assertIn("/api/pw_login", html)
+
+    @patch("xdty_booking.web.server.save_cas_credentials")
+    @patch("xdty_booking.web.server.save_auth_params")
+    @patch("xdty_booking.web.server.save_phpsessid")
+    @patch("xdty_booking.web.server.CasQrLoginClient")
+    def test_handle_pw_login_success(self, mock_client_cls, mock_save_php, mock_save_auth, mock_save_cas):
+        mock_client = MagicMock()
+        mock_client.password_login.return_value = {
+            "phpsessid": "valid_session_token_12345678",
+            "auth_params": {"token": "auth_tok", "student_num": "2024123456"}
+        }
+        mock_client_cls.return_value = mock_client
+        mock_save_php.return_value = True
+        mock_save_auth.return_value = True
+        mock_save_cas.return_value = True
+
+        handler = GymStatusHandler.__new__(GymStatusHandler)
+        handler._send_json = MagicMock()
+
+        handler._handle_pw_login({
+            "username": "2024123456",
+            "password": "my_secret_pass",
+            "remember": True
+        })
+
+        handler._send_json.assert_called_once()
+        code, body = handler._send_json.call_args[0]
+        self.assertEqual(code, 200)
+        self.assertTrue(body["success"])
+        self.assertTrue(body["logged_in"])
+        self.assertEqual(body["data"]["phpsessid"], "valid_session_token_12345678")
+        mock_save_php.assert_called_once()
+        mock_save_auth.assert_called_once()
+        mock_save_cas.assert_called_once()
+
+    @patch("xdty_booking.web.server.CasQrLoginClient")
+    def test_handle_pw_login_failure(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_client.password_login.side_effect = RuntimeError("CAS 登录失败: 用户名或者密码有误")
+        mock_client_cls.return_value = mock_client
+
+        handler = GymStatusHandler.__new__(GymStatusHandler)
+        handler._send_json = MagicMock()
+
+        handler._handle_pw_login({
+            "username": "2024123456",
+            "password": "wrong_password",
+            "remember": False
+        })
+
+        handler._send_json.assert_called_once()
+        code, body = handler._send_json.call_args[0]
+        self.assertEqual(code, 200)
+        self.assertFalse(body["success"])
+        self.assertFalse(body["logged_in"])
+        self.assertIn("用户名或密码错误", body["error"])

@@ -181,32 +181,24 @@ class SessionManager:
     def heartbeat_loop(self, interval_seconds: int = 300, notifier=None):
         """
         阻塞式心跳循环，适于独立作为保活守护进程启动。
-        传入 notifier 时作为登录状态监控：失效 -> 自动自愈 -> 通知（持续失效只通知一次，恢复后补一条）。
+        执行定期探活与静默自愈。日常后台监控遵循静默原则，不发邮件打扰用户，将通知资源完全保留给抢票流程。
         """
         interval_seconds = max(1, int(interval_seconds or 0))  # 0 由调用方视为关闭；此处防止空转
         logger.info(f"Session 心跳保活守护已启动，保活周期: {interval_seconds} 秒")
         self._running = True
-        notified_expired = False
         while self._running:
             self.adopt_config_credentials()
             alive = self.check_alive()
             current_time = time.strftime("%Y-%m-%d %H:%M:%S")
             if alive:
                 logger.info(f"[{current_time}] 心跳发送成功，Session 维持活跃状态 ✅")
-                if notified_expired:
-                    self._notify(notifier, "登录已恢复", f"检测时间：{current_time}\n当前会话：{self.phpsessid[:8]}***")
-                    notified_expired = False
             else:
                 logger.error(f"[{current_time}] ⚠️ Session 已失效或未能成功保活！尝试自动自愈...")
                 healed = self.renew_or_fallback()
-                if not notified_expired:
-                    if healed:
-                        self._notify(notifier, "登录失效，已自动重新登录",
-                                     f"检测时间：{current_time}\n新会话：{str(healed)[:8]}***")
-                    else:
-                        self._notify(notifier, "登录失效，自动重新登录失败",
-                                     f"检测时间：{current_time}\ncheckLogin 续登与账号密码登录均未成功，请尽快打开控制台登录页手动登录。")
-                notified_expired = not healed
+                if healed:
+                    logger.info(f"[{current_time}] 🎉 登录态已自动静默自愈成功！新 Session: {str(healed)[:8]}***")
+                else:
+                    logger.warning(f"[{current_time}] ⚠️ 自动续登与账号密码重登均未成功，当前处于失效状态，请打开控制台手动扫码登录")
 
             # 分段休眠，以便快速响应 stop 信号
             for _ in range(interval_seconds):
