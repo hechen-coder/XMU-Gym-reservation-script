@@ -147,12 +147,17 @@ class WeChatClient:
         owner = self.credentials.get("user_id") or self.credentials.get("userId")
         if owner and owner != user:
             raise WeChatError("微信会话与登录账号不一致，请重新绑定")
-        self.request("sendmessage", {
+        result = self.request("sendmessage", {
             "msg": {"from_user_id": "", "to_user_id": user,
                     "client_id": "openclaw-weixin-" + uuid4().hex,
                     "message_type": 2, "message_state": 2, "context_token": context,
                     "item_list": [{"type": 1, "text_item": {"text": text}}]},
         }, timeout=timeout)
+        message_id = result.get("message_id")
+        acknowledged = (type(message_id) in (str, int) and bool(message_id)) or any(
+            type(result.get(key)) is int and result[key] == 0 for key in ("ret", "errcode"))
+        if not acknowledged:
+            raise WeChatError("微信接口 sendmessage 未确认发送结果，请先检查收件，避免重复发送")
 
 
 def send_wechat(config, title, content):

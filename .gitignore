@@ -37,6 +37,9 @@ config/auth_cookies.json
 config/session.json
 **/wechatbot-credentials.json
 **/wechat_state.json
+# Atomic-write scratch files may also contain credentials after an interrupted write.
+**/wechatbot-credentials.json.*
+**/wechat_state.json.*
 *.lock
 config/*.lock
 license.lic

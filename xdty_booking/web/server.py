@@ -1093,8 +1093,8 @@ class GymStatusHandler(BaseHTTPRequestHandler):
                 if cfg.notify.enabled and cfg.notify.wechat.enabled:
                     try:
                         binding.start()
-                    except WeChatError:
-                        pass  # A prior long poll may still be stopping; manual resume remains available.
+                    except WeChatError as exc:
+                        logger.warning("通知设置已保存，但微信监听启动失败：%s", exc)
                 else:
                     binding.close()
             self._send_json(200, {

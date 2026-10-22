@@ -278,3 +278,84 @@ def test_proxy_config_accepts_only_boolean(tmp_path):
     path.write_text("notify:\n  wechat:\n    use_env_proxy: 'false'\n", encoding="utf-8")
     with pytest.raises(ValueError, match="use_env_proxy"):
         load_config(str(path))
+
+
+@pytest.mark.parametrize("payload", [{}, {"message_id": ""}, {"message_id": []}, {"unrelated": "private-token"}])
+def test_send_without_acknowledgement_is_not_success(configured, payload, caplog):
+    with patch("xdty_booking.notify.wechat.requests.post", return_value=response(payload)):
+        assert not send_wechat(configured, "测试", "内容")
+    assert "未确认发送结果" in caplog.text
+    assert "private-token" not in caplog.text
+
+
+@pytest.mark.parametrize("payload", [{"ret": 0}, {"errcode": 0}, {"message_id": "accepted-id"}])
+def test_explicit_send_acknowledgement_is_accepted(configured, payload):
+    with patch("xdty_booking.notify.wechat.requests.post", return_value=response(payload)):
+        assert send_wechat(configured, "测试", "内容")
+
+
+def test_rapid_disable_enable_resumes_after_old_poll_exits(configured):
+    binding = WeChatBinding(configured)
+    old_poll, release_old, new_poll = threading.Event(), threading.Event(), threading.Event()
+    count = []
+
+    def request(client, endpoint, *args, **kwargs):
+        if endpoint == "getupdates":
+            count.append(endpoint)
+            if len(count) == 1:
+                old_poll.set()
+                assert release_old.wait(3)
+            else:
+                new_poll.set()
+                binding._stop.wait(3)
+        return {"ret": 0}
+
+    with patch.object(WeChatClient, "request", request):
+        try:
+            binding.start()
+            assert old_poll.wait(3)
+            old_thread = binding._thread
+            binding.close()
+            binding.start()
+            assert binding.status()["phase"] == "stopping"
+            release_old.set()
+            assert new_poll.wait(3)
+            assert binding._thread is not old_thread
+            old_thread.join(3)
+            assert not old_thread.is_alive()
+        finally:
+            binding.close()
+            release_old.set()
+            if binding._thread:
+                binding._thread.join(3)
+    assert not binding._thread.is_alive()
+
+
+def test_closing_again_cancels_pending_resume(configured):
+    binding = WeChatBinding(configured)
+    old_poll, release_old = threading.Event(), threading.Event()
+
+    def request(client, endpoint, *args, **kwargs):
+        if endpoint == "getupdates":
+            old_poll.set()
+            assert release_old.wait(3)
+        return {"ret": 0}
+
+    with patch.object(WeChatClient, "request", request):
+        try:
+            binding.start()
+            assert old_poll.wait(3)
+            old_thread = binding._thread
+            binding.close()
+            binding.start()
+            binding.close()
+            release_old.set()
+            old_thread.join(3)
+            assert not old_thread.is_alive()
+            assert binding._thread is old_thread
+            assert not binding._resume_requested
+        finally:
+            binding.close()
+            release_old.set()
+            if binding._thread:
+                binding._thread.join(3)

@@ -34,6 +34,7 @@ class WeChatBinding:
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._thread = None
+        self._resume_requested = False
         self._verify = ""
         self._status = {"phase": "idle", "info": "尚未连接微信 bot", "qr_image": ""}
 
@@ -66,12 +67,14 @@ class WeChatBinding:
                 if login:
                     raise WeChatError("微信连接仍在运行，请先断开再重新连接")
                 if self._stop.is_set():
-                    raise WeChatError("微信连接正在停止，请稍后点击恢复连接")
+                    self._resume_requested = True
+                    self._set("stopping", "微信连接正在停止，结束后将自动恢复", "")
                 return
             if not login and not load_json(self.config.cred_path).get("token"):
                 self._set("idle", "请先扫码连接微信 bot", "")
                 return
             self._stop = threading.Event()
+            self._resume_requested = False
             self._verify = ""
             self._set("starting", "正在连接微信 bot…", "")
             self._thread = threading.Thread(target=self._run, args=(login,), name="WeChatBot", daemon=True)
@@ -87,6 +90,7 @@ class WeChatBinding:
 
     def close(self):
         with self._lock:
+            self._resume_requested = False
             self._stop.set()
             self._set("idle", "微信监听已停止，绑定保留；可点击恢复连接", "")
 
@@ -230,3 +234,15 @@ class WeChatBinding:
             logger.warning("微信连接失败：%s", reason)
             if not self._stop.is_set():
                 self._set("error", str(exc) if isinstance(exc, WeChatError) else "微信连接失败，请检查网络和依赖后重试", "")
+        finally:
+            # A rapid off/on must wait for the old poll, without reviving its stop event
+            # or running two pollers for the same bot at once.
+            with self._lock:
+                if self._resume_requested and self._stop.is_set():
+                    self._thread = None
+                    self._resume_requested = False
+                    try:
+                        self.start()
+                    except WeChatError as exc:
+                        logger.warning("微信监听恢复失败：%s", exc)
+                        self._set("error", str(exc), "")
