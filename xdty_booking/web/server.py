@@ -8,6 +8,7 @@ import math
 from datetime import datetime, timedelta
 from urllib.parse import urlparse, parse_qs, urlsplit
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from xdty_booking.runtime.http_server import create_loopback_server, LocalService
 from typing import Optional, Dict, Any
 
 from xdty_booking.config import (
@@ -1327,6 +1328,11 @@ class GymStatusHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
+        if path == "/healthz":
+            self._send_json(200, {"app": "XMU_Gym_Booking", "protocol": 1,
+                                  "instance_id": self.server.instance_id})
+            return
+
         if path in ("/api/book", "/api/relogin", "/api/set_token", "/api/harvest", "/api/campus/switch", "/api/pw_login"):
             self._send_json(405, {"success": False, "info": "请使用 POST"})
             return
@@ -1462,29 +1468,46 @@ def start_login_monitor(config_path: str) -> Optional[SessionManager]:
     return mgr
 
 
-def run_server(port: int = 8080, config_path: str = "config/config.yaml", host: str = "127.0.0.1"):
+def create_web_service(port=8080, config_path="config/config.yaml", host="127.0.0.1", auto_port=False):
+    """先绑定端口；调用方在健康检查成功后才打开界面。"""
     global _GLOBAL_CONFIG_PATH
     _GLOBAL_CONFIG_PATH = config_path
+    server = create_loopback_server(GymStatusHandler, port, host, auto_port)
+    monitor = {"session": None}
+    monitor_lock = threading.Lock()
+    stopped = threading.Event()
 
-    if host not in ("127.0.0.1", "localhost", "::1"):
-        raise ValueError("Web 控制台只允许监听本机回环地址；远程访问请使用 SSH 隧道")
+    def stop():
+        stopped.set()
+        _scheduler_manager.stop()
+        _snipe_manager.stop()
+        with monitor_lock:
+            if monitor["session"]:
+                monitor["session"].stop()
 
+    service = LocalService(server, on_stop=stop)
+
+    def start_monitor():
+        with monitor_lock:
+            if not stopped.is_set():
+                monitor["session"] = start_login_monitor(config_path)
+
+    service.start_monitor = lambda: threading.Thread(
+        target=start_monitor, name="LoginMonitorBootstrap", daemon=True).start()
+    return service
+
+
+def run_server(port: int = 8080, config_path: str = "config/config.yaml", host: str = "127.0.0.1"):
+    # CLI 显式端口失败时传播原异常，由终端或启动器准确报告。
+    service = create_web_service(port, config_path, host)
     try:
-        server = ThreadingHTTPServer((host, port), GymStatusHandler)
-    except OSError as e:
-        logger.warning(f"本地 Web 服务端口 {port} 已被占用，服务已处于运行中: {e}")
-        print(f"\n⚠️ 本地 Web 服务端口 {port} 已被占用，服务已在运行中。\n")
-        return
-
-    logger.info(f"🚀 健身房实时监控与预约 Web 服务已启动: http://{host}:{port}")
-    logger.info(f"👉 网页一键预约与监控大厅: http://{host}:{port}/")
-    logger.info(f"👉 企业微信扫码登录直达: http://{host}:{port}/login")
-    logger.info(f"👉 实时 JSON API: http://{host}:{port}/api/status")
-    logger.info(f"👉 凭证自愈 API: http://{host}:{port}/api/harvest")
-    print(f"\n服务启动成功！浏览器访问: http://{host}:{port} (扫码登录: http://{host}:{port}/login)\n")
-    start_login_monitor(config_path)
-    try:
-        server.serve_forever()
+        service.start()
+        logger.info("本地预约服务已就绪: %s", service.url)
+        service.start_monitor()
+        while service.thread.is_alive():
+            service.thread.join(timeout=0.5)
+        raise RuntimeError("本地服务意外退出") from service.error
     except KeyboardInterrupt:
         logger.info("已停止 Web 服务。")
-        server.server_close()
+    finally:
+        service.close()

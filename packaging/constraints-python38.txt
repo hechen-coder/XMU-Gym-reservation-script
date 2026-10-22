@@ -1,0 +1,15 @@
+# Observed Python 3.8 Windows x64 baseline. Do not install newer versions implicitly.
+PyInstaller==6.22.2
+pyinstaller-hooks-contrib==2026.7
+pywebview==6.2.1
+pythonnet==3.0.5
+ddddocr==1.5.6
+onnxruntime==1.19.2
+pyarmor==9.2.7
+Pillow==10.2.0
+numpy==1.23.4
+requests==2.25.1
+PyYAML==5.4.1
+rsa==4.9
+cryptography==3.4.7
+psutil==5.8.0

@@ -41,22 +41,19 @@ print(f"[*] Collected ddddocr models: {[os.path.basename(x[0]) for x in onnx_dat
 
 # 动态收集 pywebview 的 WebView2 与 WinForms 原生库，杜绝打包后找不到 DLL
 import webview
-webview_datas = []
+webview_binaries = []
 w_dir = os.path.dirname(webview.__file__)
 w_lib = os.path.join(w_dir, "lib")
 if os.path.exists(w_lib):
     for f in ["Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "WebBrowserInterop.x64.dll"]:
         p = os.path.join(w_lib, f)
         if os.path.exists(p):
-            webview_datas.append((p, "."))
-            webview_datas.append((p, "webview/lib"))
+            webview_binaries.append((p, "webview/lib"))
     native_loader = os.path.join(w_lib, "runtimes", "win-x64", "native", "WebView2Loader.dll")
     if os.path.exists(native_loader):
-        webview_datas.append((native_loader, "."))
-        webview_datas.append((native_loader, "runtimes/win-x64/native"))
-        webview_datas.append((native_loader, "webview/lib/runtimes/win-x64/native"))
+        webview_binaries.append((native_loader, "webview/lib/runtimes/win-x64/native"))
 
-print(f"[*] Collected pywebview native components: {[os.path.basename(x[0]) for x in webview_datas]}")
+print(f"[*] Collected pywebview native components: {[os.path.basename(x[0]) for x in webview_binaries]}")
 
 # 动态收集 xdty_booking/security 下的原生动态库 (如 pyarmor_runtime.pyd)
 sec_binaries = []
@@ -73,7 +70,7 @@ if os.path.exists(sec_path):
 datas = [
     (os.path.join(PROJECT_ROOT, "config", "config.example.yaml"), "config"),
     (os.path.join(SPEC_DIR, "app_icon.ico"), "."),
-] + onnx_datas + webview_datas + sec_binaries
+] + onnx_datas
 
 # 包含的高级配置模板（如果存在）
 adv_cfg = os.path.join(PROJECT_ROOT, "config", "config.advanced.example.yaml")
@@ -101,12 +98,6 @@ hidden_imports = [
     "xdty_booking.core.time_sync",
     "xdty_booking.notify",
     "xdty_booking.notify.notifier",
-    "xdty_booking.notify.channels",
-    "xdty_booking.notify.channels.base",
-    "xdty_booking.notify.channels.email_smtp",
-    "xdty_booking.notify.channels.pushplus",
-    "xdty_booking.notify.channels.serverchan",
-    "xdty_booking.notify.channels.bark",
     "xdty_booking.solver",
     "xdty_booking.solver.captcha_solver",
     "xdty_booking.utils",
@@ -145,7 +136,14 @@ hidden_imports = [
     "webview.platforms.edgechromium",
     "clr",
     "pythonnet",
+    "xdty_booking.runtime.http_server",
+    "xdty_booking.runtime.windows",
+    "xdty_booking.runtime.paths",
+    "xdty_booking.runtime.diagnostics",
 ]
+for path in glob.glob(os.path.join(sec_path, "pyarmor_runtime_*")):
+    if os.path.isdir(path):
+        hidden_imports.append("xdty_booking.security." + os.path.basename(path))
 
 # 排除 Anaconda 冗余巨型库与不必要的 OpenCV，使发布包清爽小巧 (省下 136MB)
 excludes = [
@@ -173,7 +171,7 @@ except Exception:
 a = Analysis(
     [os.path.join(SPEC_DIR, "launcher.py")],
     pathex=[PROJECT_ROOT],
-    binaries=[],
+    binaries=webview_binaries + sec_binaries,
     datas=datas,
     hiddenimports=hidden_imports,
     hookspath=custom_hooks,
@@ -186,11 +184,7 @@ a = Analysis(
     noarchive=False,
 )
 
-pyz = PYZ(
-    a.pure,
-    a.zipped_data,
-    cipher=None
-)
+pyz = PYZ(a.pure)
 
 exe = EXE(
     pyz,
@@ -201,7 +195,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     console=False,  # 彻底消除黑框控制台，直接唤起原生桌面应用窗口
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -209,15 +203,16 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=icon_path,
+    manifest=os.path.join(SPEC_DIR, "app.manifest"),
+    version=os.path.join(SPEC_DIR, "version-info.txt"),
 )
 
 coll = COLLECT(
     exe,
     a.binaries,
-    a.zipfiles,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name="XMU_Gym_Booking",
 )

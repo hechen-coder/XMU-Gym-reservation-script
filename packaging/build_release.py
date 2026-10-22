@@ -1,372 +1,288 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""
-自动化构建与发布包生成器 (Build Release)
-一键完成：
-1. 依赖检测与 PyInstaller 自动安装
-2. 缓存清理与独立二进制编译 (PyInstaller spec)
-3. 绿色免安装版 (Portable Zip) 自动组装与压缩
-4. Inno Setup 安装包 (Setup.exe) 智能探测与编译
-5. SHA256 校验和清单生成
-"""
+"""Isolated release builder. Existing dist files are never removed or overwritten."""
 
-import os
-import sys
-import shutil
-import zipfile
+import argparse
 import hashlib
+import importlib.metadata
+import json
+import os
+import platform
+import shutil
+import struct
 import subprocess
+import sys
+import uuid
+import zipfile
+from datetime import datetime, timezone
+from pathlib import Path
 
-# Windows 控制台字符编码兼容配置，防止 emoji 抛出 UnicodeEncodeError
-if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
-
-# 消除代理导致的 pip 或 urllib 异常
-os.environ["NO_PROXY"] = "*"
-os.environ["no_proxy"] = "*"
-
-VERSION = "1.2.2"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PACKAGING_DIR = PROJECT_ROOT / "packaging"
 APP_NAME = "XMU_Gym_Booking"
-PACKAGING_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(PACKAGING_DIR)
-DIST_DIR = os.path.join(PROJECT_ROOT, "dist")
-BUILD_DIR = os.path.join(PROJECT_ROOT, "build")
-TARGET_DIR = os.path.join(DIST_DIR, APP_NAME)
+VERSION = json.loads((PACKAGING_DIR / "version.json").read_text(encoding="utf-8"))["version"]
+RUNTIME_NAME = "MicrosoftEdgeWebview2Setup.exe"
 
 
-def log(msg: str):
-    print(f"[BUILD] {msg}")
+def digest(path):
+    result = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            result.update(block)
+    return result.hexdigest()
 
 
-def check_and_install_dependencies():
-    """检查并确保 PyInstaller 等核心打包工具就绪"""
-    log("正在检查编译依赖...")
-    # 确保 backports.tarfile 存在，防止 setuptools 报错
-    try:
-        import backports.tarfile
-    except ImportError:
-        log("检测到缺失 backports.tarfile，正在自动安装...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "backports.tarfile", "-i", "https://pypi.tuna.tsinghua.edu.cn/simple"])
-
-    try:
-        import PyInstaller
-        log(f"已检测到 PyInstaller 版本: {PyInstaller.__version__}")
-    except ImportError:
-        log("未检测到 PyInstaller，正在通过清华镜像自动安装...")
-        cmd = [sys.executable, "-m", "pip", "install", "pyinstaller", "-i", "https://pypi.tuna.tsinghua.edu.cn/simple"]
-        subprocess.check_call(cmd)
-        log("PyInstaller 安装成功！")
-
-    # 确保 pywebview 存在 (桌面原生无黑框窗口依赖)
-    try:
-        import webview
-        log("已检测到 pywebview 桌面原生窗口库")
-    except ImportError:
-        log("未检测到 pywebview，正在自动安装...")
-        cmd = [sys.executable, "-m", "pip", "install", "pywebview", "-i", "https://pypi.tuna.tsinghua.edu.cn/simple"]
-        subprocess.check_call(cmd)
-        log("pywebview 安装成功！")
-
-    try:
-        import rsa
-        log("已检测到 rsa 非对称加密签名库")
-    except ImportError:
-        log("未检测到 rsa 库，正在自动安装...")
-        cmd = [sys.executable, "-m", "pip", "install", "rsa", "-i", "https://pypi.tuna.tsinghua.edu.cn/simple"]
-        subprocess.check_call(cmd)
-        log("rsa 安装成功！")
-
-    try:
-        import cryptography
-        log("已检测到 cryptography 证书加密库")
-    except ImportError:
-        log("未检测到 cryptography 库，正在自动安装...")
-        cmd = [sys.executable, "-m", "pip", "install", "cryptography", "-i", "https://pypi.tuna.tsinghua.edu.cn/simple"]
-        subprocess.check_call(cmd)
-        log("cryptography 安装成功！")
-
-    try:
-        import pyarmor
-        log("已检测到 pyarmor 安全混淆防护引擎")
-    except ImportError:
-        log("未检测到 pyarmor，正在自动安装...")
-        cmd = [sys.executable, "-m", "pip", "install", "pyarmor", "-i", "https://pypi.tuna.tsinghua.edu.cn/simple"]
-        subprocess.check_call(cmd)
-        log("pyarmor 安装成功！")
+def find_iscc(explicit=None):
+    if explicit is not None:
+        if not Path(explicit).is_file():
+            raise FileNotFoundError("Inno Setup compiler not found: " + str(explicit))
+        return str(Path(explicit).resolve())
+    candidates = [shutil.which("iscc"), os.environ.get("ISCC_PATH"),
+                  r"D:\Inno Setup 6\ISCC.exe",
+                  r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+                  r"C:\Program Files\Inno Setup 6\ISCC.exe"]
+    return next((str(p) for p in candidates if p and Path(p).is_file()), None)
 
 
-
-def clean_build_artifacts():
-    """清理历史构建缓存与目录"""
-    log("正在清理历史构建缓存...")
-    if sys.platform == "win32":
+def check_dependencies(obfuscate=True):
+    if sys.platform != "win32" or struct.calcsize("P") != 8:
+        raise RuntimeError("Release builds require Windows x64")
+    if sys.version_info[:2] != (3, 8):
+        raise RuntimeError("This release baseline requires Python 3.8; no automatic upgrade is performed")
+    required = ["PyInstaller", "pyinstaller-hooks-contrib", "pywebview", "pythonnet", "ddddocr",
+                "onnxruntime", "Pillow", "numpy", "requests", "PyYAML", "rsa", "cryptography", "psutil"]
+    if obfuscate:
+        required.append("pyarmor")
+    versions = {}
+    for name in required:
         try:
-            subprocess.run(["taskkill", "/F", "/IM", f"{APP_NAME}.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception:
-            pass
-    for d in [BUILD_DIR, TARGET_DIR]:
-        if os.path.exists(d):
-            try:
-                shutil.rmtree(d)
-                log(f"已清理目录: {d}")
-            except Exception as e:
-                log(f"清理 {d} 时出现警告: {e}")
+            versions[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            raise RuntimeError("Missing build dependency: {}. Install the verified constraints first.".format(name))
+    constraints = PACKAGING_DIR / "constraints-python38.txt"
+    for line in constraints.read_text(encoding="utf-8").splitlines():
+        if line and not line.startswith("#"):
+            name, expected = line.split("==", 1)
+            if name in versions and versions[name] != expected:
+                raise RuntimeError("Dependency mismatch: {} expected {}, found {}".format(name, expected, versions[name]))
+    # Distribution metadata alone does not prove that native extension DLLs load.
+    probe = subprocess.run([sys.executable, "-c",
+                            "import onnxruntime, ddddocr, clr; "
+                            "from cryptography.hazmat.backends.openssl.backend import backend; "
+                            "print(backend.openssl_version_text())"],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                           encoding="utf-8", errors="replace", timeout=60)
+    if probe.returncode:
+        raise RuntimeError("Native dependency self-check failed; repair the build environment before publishing:\n" + probe.stderr)
+    return versions
 
 
-def run_pyinstaller():
-    """执行 PyInstaller 核心编译"""
-    spec_file = os.path.join(PACKAGING_DIR, "XMU_Gym_Booking.spec")
-    if not os.path.exists(spec_file):
-        raise FileNotFoundError(f"未找到 Spec 文件: {spec_file}")
+def prepare_workspace(version, root=PROJECT_ROOT):
+    # mkdir(exist_ok=False) plus an unpredictable suffix prevents same-version overwrite.
+    if not version or any(c not in "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-" for c in version):
+        raise ValueError("Invalid release version")
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
+    root = Path(root).resolve()
+    output = root / "dist" / "releases" / ("v" + version) / run_id
+    work = root / "build" / "releases" / run_id
+    output.mkdir(parents=True, exist_ok=False)
+    work.mkdir(parents=True, exist_ok=False)
+    return output, work
 
-    log(f"开始执行 PyInstaller 编译 (读取 {spec_file})...")
-    cmd = [
-        "pyinstaller",
-        "--clean",
-        "--noconfirm",
-        f"--distpath={DIST_DIR}",
-        f"--workpath={BUILD_DIR}",
-        spec_file
-    ]
+
+def stage_sources(work):
+    stage = Path(work) / "source"
+    stage.mkdir(exist_ok=False)
+    for folder in ("xdty_booking", "cas_qr_login"):
+        for source in (PROJECT_ROOT / folder).rglob("*.py"):
+            if "__pycache__" in source.parts:
+                continue
+            destination = stage / source.relative_to(PROJECT_ROOT)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(source), str(destination))
+    for name in ("main.py", "query_gym.py", "LICENSE"):
+        shutil.copy2(str(PROJECT_ROOT / name), str(stage / name))
+    for name in ("config.example.yaml", "config.advanced.example.yaml"):
+        destination = stage / "config" / name
+        destination.parent.mkdir(exist_ok=True)
+        shutil.copy2(str(PROJECT_ROOT / "config" / name), str(destination))
+    (stage / "packaging").mkdir()
+    for name in ("launcher.py", "XMU_Gym_Booking.spec", "hook-cv2-mock.py", "app_icon.ico", "app.manifest"):
+        shutil.copy2(str(PACKAGING_DIR / name), str(stage / "packaging" / name))
+    return stage
+
+
+def build_application(stage, work, output, obfuscate=True, version=VERSION):
+    components = version.split("-", 1)[0].split(".")
+    numeric = tuple((int(part) if part.isdigit() else 0) for part in components[:4])
+    numeric = numeric + (0,) * (4 - len(numeric))
+    if any(number > 65535 for number in numeric):
+        raise ValueError("Windows version components must be <= 65535")
+    version_text = (
+        "VSVersionInfo(ffi=FixedFileInfo(filevers={0!r}, prodvers={0!r}, "
+        "mask=0x3f, flags=0, OS=0x40004, fileType=1, subtype=0, date=(0,0)), "
+        "kids=[StringFileInfo([StringTable('040904B0', [StringStruct('FileVersion', {1!r}), "
+        "StringStruct('ProductVersion', {1!r}), StringStruct('ProductName', 'XMU Gym Booking')])]), "
+        "VarFileInfo([VarStruct('Translation', [1033,1200])])])"
+    ).format(numeric, version)
+    (stage / "packaging" / "version-info.txt").write_text(version_text, encoding="utf-8")
+    if obfuscate:
+        obf = Path(work) / "obfuscated"
+        subprocess.check_call([sys.executable, "-m", "pyarmor.cli", "gen", "-i", "-O", str(obf),
+                               "-r", str(stage / "xdty_booking" / "security")], cwd=str(stage))
+        generated = obf / "security"
+        if not generated.is_dir() or not list(generated.glob("pyarmor_runtime_*")):
+            raise RuntimeError("PyArmor output is incomplete; release stopped")
+        for source in (stage / "xdty_booking" / "security").glob("*.py"):
+            if not (generated / source.name).is_file():
+                raise RuntimeError("PyArmor omitted " + source.name)
+        shutil.copytree(str(generated), str(stage / "xdty_booking" / "security"), dirs_exist_ok=True)
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
-    subprocess.check_call(cmd, cwd=PROJECT_ROOT, env=env)
-    log("PyInstaller 编译完成！")
+    subprocess.check_call([sys.executable, "-m", "PyInstaller", "--clean", "--noconfirm",
+                           "--distpath", str(output), "--workpath", str(Path(work) / "pyinstaller"),
+                           str(stage / "packaging" / "XMU_Gym_Booking.spec")], cwd=str(stage), env=env)
+    target = Path(output) / APP_NAME
+    if not (target / (APP_NAME + ".exe")).is_file():
+        raise RuntimeError("PyInstaller did not produce the application")
+    return target
 
 
-def protect_and_run_pyinstaller():
-    """在打包构建前对 security 安全授权核心实施 PyArmor 防逆向混淆加密，构建完成后自动还原源码"""
-    sec_dir = os.path.join(PROJECT_ROOT, "xdty_booking", "security")
-    backup_dir = os.path.join(PROJECT_ROOT, "xdty_booking", "security_source_backup")
-    obf_out_dir = os.path.join(PROJECT_ROOT, "build", "obf_sec")
-    saved_runtime_backup = os.path.join(PROJECT_ROOT, "build", "saved_pyarmor_runtime")
-
-    use_obf = False
-    try:
-        log("正在调用 PyArmor 对核心安全授权模块执行防逆向加密与字节码混淆...")
-        if os.path.exists(obf_out_dir):
-            shutil.rmtree(obf_out_dir)
-        os.makedirs(obf_out_dir, exist_ok=True)
-
-        # 核心关键参数：必须使用 -i 将 runtime 模块自包含在 security 内部，避免顶层导入丢失
-        cmd = [sys.executable, "-m", "pyarmor.cli", "gen", "-i", "-O", obf_out_dir, "-r", sec_dir]
-        subprocess.check_call(cmd, stdout=subprocess.DEVNULL)
-
-        obf_pkg_dir = os.path.join(obf_out_dir, "security")
-
-        if os.path.exists(obf_pkg_dir):
-            # 1. 备份原明文源码
-            if os.path.exists(backup_dir):
-                shutil.rmtree(backup_dir)
-            shutil.copytree(sec_dir, backup_dir)
-
-            # 2. 拷贝并保留一份 pyarmor_runtime 供构建后处理兜底复制
-            for item in os.listdir(obf_pkg_dir):
-                if item.startswith("pyarmor_runtime"):
-                    r_src = os.path.join(obf_pkg_dir, item)
-                    if os.path.exists(saved_runtime_backup):
-                        shutil.rmtree(saved_runtime_backup)
-                    shutil.copytree(r_src, saved_runtime_backup)
-
-            # 3. 覆盖混淆后的完整目录 (包含 pyarmor_runtime_xxxxxx 及其 .pyd) 到 security
-            shutil.rmtree(sec_dir)
-            shutil.copytree(obf_pkg_dir, sec_dir)
-
-            use_obf = True
-            log("核心安全授权模块已成功转换为自包含加密字节码与原生 DLL 保护！")
-    except Exception as e:
-        log(f"安全混淆处理警告 (将以标准模式打包): {e}")
-
-    try:
-        run_pyinstaller()
-    finally:
-        if use_obf and os.path.exists(backup_dir):
-            log("正在无缝还原开发环境安全模块源代码...")
-            try:
-                shutil.rmtree(sec_dir)
-                shutil.copytree(backup_dir, sec_dir)
-                shutil.rmtree(backup_dir)
-            except Exception as e:
-                log(f"还原源码警告: {e}")
-
-            if os.path.exists(obf_out_dir):
-                try:
-                    shutil.rmtree(obf_out_dir)
-                except Exception:
-                    pass
-            log("开发源码环境已自动 100% 恢复如初！")
+def verify_payload(target):
+    target = Path(target)
+    required = [APP_NAME + ".exe", "_internal/python38.dll", "config/config.example.yaml",
+                "prerequisites/" + RUNTIME_NAME, "_internal/ddddocr/common_old.onnx",
+                "_internal/webview/lib/Microsoft.Web.WebView2.Core.dll",
+                "_internal/webview/lib/Microsoft.Web.WebView2.WinForms.dll",
+                "_internal/webview/lib/runtimes/win-x64/native/WebView2Loader.dll"]
+    missing = [name for name in required if not (target / name).is_file()]
+    if missing:
+        raise RuntimeError("Missing payload files: " + ", ".join(missing))
+    forbidden = {"config.yaml", "auth_cookies.json", "session.json", "license.lic", ".auth_state"}
+    for path in target.rglob("*"):
+        if path.is_file() and (path.name.lower() in forbidden or path.suffix.lower() in (".log", ".key")
+                               or (path.suffix.lower() == ".pem" and path.relative_to(target).as_posix() != "_internal/certifi/cacert.pem")):
+            raise RuntimeError("Private/runtime file in release: " + str(path.relative_to(target)))
 
 
-def post_process_portable_distribution():
-    """完善免安装便携版目录，写入快捷批处理启动器"""
-    log("正在后处理便携版分发目录...")
-    exe_file = os.path.join(TARGET_DIR, f"{APP_NAME}.exe")
-    if not os.path.exists(exe_file):
-        raise FileNotFoundError(f"编译产物缺失: 未找到 {exe_file}")
-
-    # 1. 确保 config 模板齐全
-    cfg_dir = os.path.join(TARGET_DIR, "config")
-    os.makedirs(cfg_dir, exist_ok=True)
-    src_example = os.path.join(PROJECT_ROOT, "config", "config.example.yaml")
-    if os.path.exists(src_example):
-        shutil.copy(src_example, os.path.join(cfg_dir, "config.example.yaml"))
-
-    # 2. 预创建日志目录 logs/
-    logs_dir = os.path.join(TARGET_DIR, "logs")
-    os.makedirs(logs_dir, exist_ok=True)
-
-    # 3. 复制 WebView2 核心运行时 DLL 到 EXE 根目录（确保 Windows 各路径模式下 100% 成功加载 WebView2 窗口）
-    w_lib = os.path.join(TARGET_DIR, "_internal", "webview", "lib")
-    if os.path.exists(w_lib):
-        for f in ["Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll"]:
-            src = os.path.join(w_lib, f)
-            if os.path.exists(src):
-                shutil.copy2(src, os.path.join(TARGET_DIR, f))
-        native_loader = os.path.join(w_lib, "runtimes", "win-x64", "native", "WebView2Loader.dll")
-        if os.path.exists(native_loader):
-            shutil.copy2(native_loader, os.path.join(TARGET_DIR, "WebView2Loader.dll"))
-
-    # 4. 复制应用高清图标
-    icon_src = os.path.join(PACKAGING_DIR, "app_icon.ico")
-    if os.path.exists(icon_src):
-        shutil.copy2(icon_src, os.path.join(TARGET_DIR, "app_icon.ico"))
-
-    # 5. 确保 pyarmor_runtime 动态库在打包产物中完整就绪 (双重路径保障)
-    saved_runtime_backup = os.path.join(PROJECT_ROOT, "build", "saved_pyarmor_runtime")
-    if os.path.exists(saved_runtime_backup):
-        runtime_name = "pyarmor_runtime_000000"
-        # 路径 A: _internal/xdty_booking/security/pyarmor_runtime_000000 (自包含相对导入)
-        dst_a = os.path.join(TARGET_DIR, "_internal", "xdty_booking", "security", runtime_name)
-        os.makedirs(dst_a, exist_ok=True)
-        for f in os.listdir(saved_runtime_backup):
-            shutil.copy2(os.path.join(saved_runtime_backup, f), os.path.join(dst_a, f))
-
-        # 路径 B: _internal/pyarmor_runtime_000000 (顶层绝对导入兜底)
-        dst_b = os.path.join(TARGET_DIR, "_internal", runtime_name)
-        os.makedirs(dst_b, exist_ok=True)
-        for f in os.listdir(saved_runtime_backup):
-            shutil.copy2(os.path.join(saved_runtime_backup, f), os.path.join(dst_b, f))
-
-        log("PyArmor 原生防护运行时 DLL 已成功注入打包产物目录！")
-
-    log(f"便携版目录就绪 (已完成极简精简): {TARGET_DIR}")
+def assemble_payload(target, runtime, metadata):
+    target = Path(target)
+    config = target / "config"
+    config.mkdir(exist_ok=True)
+    for name in ("config.example.yaml", "config.advanced.example.yaml"):
+        shutil.copy2(str(PROJECT_ROOT / "config" / name), str(config / name))
+    prerequisites = target / "prerequisites"
+    prerequisites.mkdir()
+    shutil.copy2(str(runtime), str(prerequisites / RUNTIME_NAME))
+    shutil.copy2(str(PACKAGING_DIR / "app_icon.ico"), str(target / "app_icon.ico"))
+    shutil.copy2(str(PACKAGING_DIR / "USER_GUIDE.txt"), str(target / "USER_GUIDE.txt"))
+    shutil.copy2(str(PROJECT_ROOT / "LICENSE"), str(target / "LICENSE"))
+    (target / "portable-mode").write_text("portable\n", encoding="utf-8")
+    (target / "build-info.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+    verify_payload(target)
+    manifest = {p.relative_to(target).as_posix(): {"size": p.stat().st_size, "sha256": digest(p)}
+                for p in sorted(target.rglob("*")) if p.is_file()}
+    (target / "file-manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def make_portable_zip() -> str:
-    """将便携版目录打包为 Zip 压缩包"""
-    zip_filename = f"{APP_NAME}_v{VERSION}_Portable_Windows_x64.zip"
-    zip_path = os.path.join(DIST_DIR, zip_filename)
-    if os.path.exists(zip_path):
-        os.remove(zip_path)
-
-    log(f"正在压缩生成绿色便携版: {zip_filename}...")
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for root, dirs, files in os.walk(TARGET_DIR):
-            for file in files:
-                abs_path = os.path.join(root, file)
-                rel_path = os.path.relpath(abs_path, DIST_DIR)
-                zf.write(abs_path, rel_path)
-
-    size_mb = os.path.getsize(zip_path) / (1024 * 1024)
-    log(f"✅ 绿色便携版压缩完成: {zip_path} ({size_mb:.2f} MB)")
-    return zip_path
+def make_portable_zip(target, output, version):
+    verify_payload(target)
+    destination = Path(output) / (APP_NAME + "_v" + version + "_Portable_Windows_x64.zip")
+    with zipfile.ZipFile(str(destination), "x", zipfile.ZIP_DEFLATED) as archive:
+        for path in sorted(Path(target).rglob("*")):
+            if path.is_file():
+                archive.write(str(path), APP_NAME + "/" + path.relative_to(target).as_posix())
+    return destination
 
 
-def find_iscc() -> str:
-    """寻找本地 Inno Setup 编译器 ISCC.exe"""
-    candidates = [
-        shutil.which("iscc"),
-        r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
-        r"C:\Program Files\Inno Setup 6\ISCC.exe",
-        r"C:\Program Files (x86)\Inno Setup 5\ISCC.exe",
-        r"C:\Program Files\Inno Setup 5\ISCC.exe",
-    ]
-    for c in candidates:
-        if c and os.path.exists(c):
-            return c
-    return None
+def build_installer(target, output, version, compiler):
+    subprocess.check_call([compiler, "/DMyAppVersion=" + version,
+                           "/DSourceDir=" + str(Path(target).resolve()),
+                           "/DReleaseOutput=" + str(Path(output).resolve()),
+                           str(PACKAGING_DIR / "installer.iss")], cwd=str(PACKAGING_DIR))
+    destination = Path(output) / (APP_NAME + "_Setup_v" + version + ".exe")
+    if not destination.is_file():
+        raise RuntimeError("Setup output is missing")
+    return destination
 
 
-def build_installer_if_possible() -> str:
-    """如果存在 Inno Setup，则编译 Windows 安装向导 EXE"""
-    iscc = find_iscc()
-    iss_file = os.path.join(PACKAGING_DIR, "installer.iss")
-
-    if not iscc:
-        log("⚠️ 本地未检测到 Inno Setup 编译器 (ISCC.exe)。")
-        log("   - 若需要本地生成 Setup 安装包，可从官网下载安装 Inno Setup 6: https://jrsoftware.org/isdl.php")
-        log("   - 本项目已配置 GitHub Actions CI/CD 流水线，推送 Tag 后云端会自动编译 Setup 安装包！")
-        return None
-
-    log(f"检测到 Inno Setup 编译器: {iscc}，正在编译安装包向导...")
-    cmd = [iscc, f"/DMyAppVersion={VERSION}", iss_file]
-    subprocess.check_call(cmd, cwd=PACKAGING_DIR)
-
-    setup_exe = os.path.join(DIST_DIR, f"{APP_NAME}_Setup_v{VERSION}.exe")
-    if os.path.exists(setup_exe):
-        size_mb = os.path.getsize(setup_exe) / (1024 * 1024)
-        log(f"🎉 [成功] Windows 安装向导包已生成: {setup_exe} ({size_mb:.2f} MB)")
-        return setup_exe
-    return None
+def smoke_test_payload(target, output, work):
+    # Run a copy: first-run config/logs must never contaminate the distributable tree.
+    test_target = Path(work) / "self-test" / APP_NAME
+    shutil.copytree(str(target), str(test_target))
+    report = Path(output) / "self-test.json"
+    process = subprocess.run([str(test_target / (APP_NAME + ".exe")), "self-test", "--output", str(report)],
+                             cwd=str(test_target), timeout=120)
+    if process.returncode or not report.is_file() or not json.loads(report.read_text(encoding="utf-8")).get("ok"):
+        raise RuntimeError("Frozen application self-test failed; see " + str(report))
 
 
-def generate_sha256sums():
-    """生成发布文件的 SHA256 校验清单"""
-    log("正在计算发布文件 SHA256 校验和...")
-    sums_file = os.path.join(DIST_DIR, "SHA256SUMS.txt")
-    lines = []
-
-    for name in os.listdir(DIST_DIR):
-        if name.endswith((".zip", ".exe")) and name != "SHA256SUMS.txt":
-            fp = os.path.join(DIST_DIR, name)
-            if os.path.isfile(fp):
-                h = hashlib.sha256()
-                with open(fp, "rb") as f:
-                    while chunk := f.read(8192 * 1024):
-                        h.update(chunk)
-                sha = h.hexdigest()
-                lines.append(f"{sha}  {name}")
-                log(f"  {name}: {sha}")
-
-    if lines:
-        with open(sums_file, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
-        log(f"校验清单已保存至: {sums_file}")
+def generate_sha256sums(artifacts, output):
+    destination = Path(output) / "SHA256SUMS.txt"
+    with destination.open("x", encoding="utf-8") as stream:
+        for path in artifacts:
+            stream.write(digest(path) + "  " + Path(path).name + "\n")
+    return destination
 
 
-def main():
-    print("=" * 72)
-    print(f"       厦大体育馆自动预约工具 v{VERSION} - 独立发布包自动化构建")
-    print("=" * 72)
-
-    try:
-        check_and_install_dependencies()
-        clean_build_artifacts()
-        protect_and_run_pyinstaller()
-        post_process_portable_distribution()
-        make_portable_zip()
-        build_installer_if_possible()
-        generate_sha256sums()
-
-        print("\n" + "=" * 72)
-        print("🎉 全部构建流程顺利完成！产物位于 dist/ 目录：")
-        print(f"📁 便携解压版目录: {TARGET_DIR}")
-        print(f"📦 便携版压缩包:   dist/{APP_NAME}_v{VERSION}_Portable_Windows_x64.zip")
-        setup_file = os.path.join(DIST_DIR, f"{APP_NAME}_Setup_v{VERSION}.exe")
-        if os.path.exists(setup_file):
-            print(f"💿 Windows 安装向导: dist/{APP_NAME}_Setup_v{VERSION}.exe")
-        print("=" * 72 + "\n")
-
-    except Exception as e:
-        print(f"\n❌ 构建过程中出现错误: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--version", default=VERSION)
+    parser.add_argument("--runtime-installer", type=Path,
+                        default=PACKAGING_DIR / "prerequisites" / RUNTIME_NAME)
+    parser.add_argument("--iscc", type=Path, help="Explicit path to Inno Setup 6 ISCC.exe")
+    parser.add_argument("--portable-only", action="store_true", help="Development ZIP build; not a complete dual-artifact release")
+    parser.add_argument("--no-obfuscation", action="store_true", help="Explicitly build without PyArmor and record this in metadata")
+    parser.add_argument("--check", action="store_true", help="Validate prerequisites without creating release files")
+    args = parser.parse_args(argv)
+    versions = check_dependencies(not args.no_obfuscation)
+    compiler = find_iscc(args.iscc)
+    if not args.portable_only and not compiler:
+        raise RuntimeError("Inno Setup 6 is required for ZIP + Setup releases; existing dist is untouched")
+    if not args.runtime_installer.is_file():
+        raise FileNotFoundError("Provide Microsoft's small Evergreen Bootstrapper using --runtime-installer")
+    if args.runtime_installer.name.lower() != RUNTIME_NAME.lower():
+        raise ValueError("This lightweight release requires MicrosoftEdgeWebview2Setup.exe (Evergreen Bootstrapper), not the offline installer")
+    sys.path.insert(0, str(PROJECT_ROOT))
+    from xdty_booking.runtime.windows import verify_microsoft_installer
+    verify_microsoft_installer(args.runtime_installer)
+    if args.check:
+        print("Build prerequisites verified; existing dist is untouched")
+        return 0
+    output, work = prepare_workspace(args.version)
+    metadata = {"version": args.version, "python": sys.version, "architecture": platform.machine(),
+                "dependencies": versions, "obfuscated": not args.no_obfuscation,
+                "runtime_installer_sha256": digest(args.runtime_installer),
+                "runtime_install_mode": "evergreen-bootstrapper-online",
+                "created_utc": datetime.now(timezone.utc).isoformat(), "validation": "pending-clean-Windows-QA"}
+    commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(PROJECT_ROOT),
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    metadata["commit"] = commit.stdout.strip() if commit.returncode == 0 else None
+    (output / "BUILD_INCOMPLETE").write_text("Do not publish before this build succeeds.\n", encoding="utf-8")
+    stage = stage_sources(work)
+    target = build_application(stage, work, output, not args.no_obfuscation, args.version)
+    assemble_payload(target, args.runtime_installer, metadata)
+    smoke_test_payload(target, output, work)
+    artifacts = [make_portable_zip(target, output, args.version)]
+    if not args.portable_only:
+        artifacts.append(build_installer(target, output, args.version, compiler))
+    generate_sha256sums(artifacts, output)
+    notes = ("# XMU Gym Booking v" + args.version + "\n\n"
+             "Portable ZIP: extract the complete directory and run the included EXE.\n"
+             "Setup EXE: install the same application and shortcuts.\n"
+             "Missing WebView2: use the in-app native repair prompt; no automatic browser fallback.\n"
+             "The bundled small Microsoft bootstrapper requires internet only when installing or repairing WebView2.\n"
+             "Build completed; clean-Windows UI and OCR acceptance is still required before publishing.\n")
+    (output / "release-notes.md").write_text(notes, encoding="utf-8")
+    (output / "BUILD_INCOMPLETE").unlink()
+    print("Build completed: " + str(output))
+    print("Existing dist releases preserved. Clean-Windows acceptance remains required.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        sys.exit(main())
+    except Exception as exc:
+        print("BUILD FAILED: " + str(exc), file=sys.stderr)
+        sys.exit(1)

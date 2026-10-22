@@ -5,7 +5,7 @@
 此文件负责：
 1. 自动校准运行目录（确保无论从快捷方式还是命令行启动，都能准确定位配置文件与数据）；
 2. 兼容命令行参数调用（支持与 main.py 相同的全部 CLI 指令）；
-3. 提供小白双击交互控制台（直接双击 exe 时提供优雅的快捷菜单，不闪退并支持自动打开网页版）。
+3. 默认在应用内打开；组件缺失时原生修复，浏览器仅由用户主动选择。
 """
 
 import os
@@ -68,20 +68,32 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 
-# 导入主程序模块
-from main import main as cli_main
+def cli_main():
+    # GUI 诊断就绪之前不加载网络、OCR、授权等业务依赖。
+    from main import main
+    return main()
 
 
-def _open_browser_delayed(url: str, delay_seconds: float = 1.0):
-    """延时自动打开默认浏览器访问 Web 页面"""
-    def _task():
-        time.sleep(delay_seconds)
-        try:
-            webbrowser.open(url)
-        except Exception:
-            pass
-    t = threading.Thread(target=_task, daemon=True)
-    t.start()
+def _bootstrap():
+    import logging
+    from logging.handlers import RotatingFileHandler
+    from xdty_booking.runtime.paths import prepare_data_dir, log_dir
+    logs = log_dir()
+    handler = RotatingFileHandler(str(logs / "startup.log"), maxBytes=2 * 1024 * 1024,
+                                  backupCount=3, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    root.addHandler(handler)
+
+    def unhandled(kind, value, tb):
+        logging.getLogger("startup").error("启动或运行异常", exc_info=(kind, value, tb))
+
+    sys.excepthook = unhandled
+    threading.excepthook = lambda args: unhandled(args.exc_type, args.exc_value, args.exc_traceback)
+    logging.getLogger("startup").info("BOOTSTRAP python=%s frozen=%s", sys.version, getattr(sys, "frozen", False))
+    target = prepare_data_dir()
+    os.chdir(str(target))
 
 
 def interactive_menu():
@@ -110,14 +122,8 @@ def interactive_menu():
             break
 
         if not choice or choice == "1":
-            if not check_single_instance():
-                input("\n按回车键返回主菜单...")
-                continue
-            print("\n>>> 正在启动 Web 控制台 (http://localhost:8080)...")
-            _open_browser_delayed("http://localhost:8080", delay_seconds=0.8)
-            sys.argv = [sys.argv[0], "web"]
             try:
-                cli_main()
+                launch_desktop_window(browser_mode=True)
             except KeyboardInterrupt:
                 print("\nWeb 服务已停止。")
             continue
@@ -222,7 +228,8 @@ def _log_gui_msg(msg: str):
     """记录 GUI 运行及异常信息到 logs/gui_error.log"""
     try:
         from datetime import datetime
-        logs_dir = os.path.join(APP_DIR, "logs")
+        from xdty_booking.runtime.paths import log_dir
+        logs_dir = str(log_dir())
         os.makedirs(logs_dir, exist_ok=True)
         log_path = os.path.join(logs_dir, "gui_error.log")
         with open(log_path, "a", encoding="utf-8") as f:
@@ -310,7 +317,7 @@ def _setup_system_tray(window, url: str, tray_holder: dict):
                         # 3. 使用 Win32 API 绝对保证还原并置顶 (SW_RESTORE = 9)
                         try:
                             import ctypes
-                            hwnd = form.Handle.ToInt32()
+                            hwnd = form.Handle.ToInt64()
                             user32 = ctypes.windll.user32
                             user32.ShowWindow(hwnd, 9)
                             user32.SetForegroundWindow(hwnd)
@@ -333,8 +340,9 @@ def _setup_system_tray(window, url: str, tray_holder: dict):
                 def on_log_clicked(sender, args):
                     try:
                         from System.Windows.Forms import MessageBox, MessageBoxButtons, MessageBoxIcon
-                        log_file = os.path.join(APP_DIR, "logs", "booking.log")
-                        logs_dir = os.path.join(APP_DIR, "logs")
+                        from xdty_booking.runtime.paths import data_dir
+                        log_file = str(data_dir() / "logs" / "booking.log")
+                        logs_dir = str(data_dir() / "logs")
                         if os.path.exists(log_file):
                             os.startfile(log_file)
                         elif os.path.exists(os.path.join(APP_DIR, "booking.log")):
@@ -353,10 +361,11 @@ def _setup_system_tray(window, url: str, tray_holder: dict):
                     except Exception:
                         pass
                     try:
+                        window._force_close = True
                         window.destroy()
                     except Exception:
                         pass
-                    os._exit(0)
+                    return
 
                 item_show = ToolStripMenuItem("🖥️ 显示主界面")
                 item_show.Click += do_show_window
@@ -402,67 +411,6 @@ def _setup_system_tray(window, url: str, tray_holder: dict):
         _log_gui_msg(f"_setup_system_tray init error: {e}")
 
 
-def _patch_pywebview_frozen_loader():
-    """
-    修复 pywebview 在 PyInstaller 打包环境 (onedir/frozen) 下无法定位 WebView2 DLL 和运行时的官方问题。
-    """
-    try:
-        import webview.util
-        _orig_interop_dll_path = webview.util.interop_dll_path
-
-        def _patched_interop(dll_name: str) -> str:
-            # 1. 优先尝试原逻辑查找
-            try:
-                p = _orig_interop_dll_path(dll_name)
-                if os.path.exists(p):
-                    return p
-            except Exception:
-                pass
-
-            # 2. 在 PyInstaller 展开目录全面扫描
-            candidates_dirs = [
-                APP_DIR,
-                os.path.join(APP_DIR, "_internal"),
-                os.path.join(APP_DIR, "_internal", "webview", "lib"),
-                os.path.join(APP_DIR, "webview", "lib"),
-            ]
-            if hasattr(sys, "_MEIPASS"):
-                candidates_dirs.insert(0, sys._MEIPASS)
-                candidates_dirs.insert(1, os.path.join(sys._MEIPASS, "webview", "lib"))
-
-            # 如果是平台架构名 (win-arm64, win-x64, win-x86)
-            if dll_name in ("win-arm64", "win-x64", "win-x86"):
-                for cd in candidates_dirs:
-                    target = os.path.join(cd, "runtimes", dll_name, "native")
-                    if os.path.exists(target):
-                        return target
-                    target2 = os.path.join(cd, dll_name)
-                    if os.path.exists(target2):
-                        return target2
-                # 若无非必要架构（如 win-arm64），回退至本机 x64 路径，避免抛出 FileNotFoundError
-                for cd in candidates_dirs:
-                    target = os.path.join(cd, "runtimes", "win-x64", "native")
-                    if os.path.exists(target):
-                        return target
-                return APP_DIR
-
-            # 如果是具体 DLL 文件名
-            for cd in candidates_dirs:
-                target = os.path.join(cd, dll_name)
-                if os.path.exists(target):
-                    return target
-                target_sub = os.path.join(cd, "runtimes", "win-x64", "native", dll_name)
-                if os.path.exists(target_sub):
-                    return target_sub
-
-            # 最终尝试原函数
-            return _orig_interop_dll_path(dll_name)
-
-        webview.util.interop_dll_path = _patched_interop
-    except Exception:
-        pass
-
-
 _SINGLE_INSTANCE_MUTEX = None
 
 
@@ -482,19 +430,36 @@ def check_single_instance(app_title: str = "厦大体育馆自动预约工具", 
         import ctypes
 
         ERROR_ALREADY_EXISTS = 183
-        MUTEX_NAME = "Global\\XMU_Gym_Booking_Desktop_SingleInstance_Mutex"
+        MUTEX_NAME = "Local\\XMU_Gym_Booking_Desktop_SingleInstance_Mutex"
 
         kernel32 = ctypes.windll.kernel32
         user32 = ctypes.windll.user32
+        from ctypes import wintypes
+        kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+        kernel32.CreateMutexW.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+        user32.FindWindowW.restype = wintypes.HWND
+        user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.SetForegroundWindow.argtypes = [wintypes.HWND]
 
         # 尝试创建命名互斥体
         mutex = kernel32.CreateMutexW(None, False, MUTEX_NAME)
         last_error = kernel32.GetLastError()
+        if not mutex:
+            raise OSError(last_error, "无法创建单实例互斥体")
 
         if last_error == ERROR_ALREADY_EXISTS:
+            kernel32.CloseHandle(mutex)
             # 尝试查找已运行的前台窗口并唤醒恢复
             try:
                 hwnd = user32.FindWindowW(None, app_title)
+                if not hwnd:
+                    for title in ("无法打开应用内界面", "预约工具 — 应急浏览器模式"):
+                        hwnd = user32.FindWindowW(None, title)
+                        if hwnd:
+                            break
                 if hwnd:
                     # SW_RESTORE = 9
                     user32.ShowWindow(hwnd, 9)
@@ -509,7 +474,7 @@ def check_single_instance(app_title: str = "厦大体育馆自动预约工具", 
                 MB_TOPMOST = 0x00040000
                 user32.MessageBoxW(
                     None,
-                    f"【{app_title}】已在运行中（已打开）！\n\n已为您自动切换至已打开的窗口，请勿重复运行多个实例。",
+                    f"【{app_title}】已在运行中（已打开或正在启动）！\n\n请查看已有窗口或组件修复窗口，勿重复启动。",
                     f"{app_title} - 运行提示",
                     MB_OK | MB_ICONINFORMATION | MB_TOPMOST
                 )
@@ -520,7 +485,7 @@ def check_single_instance(app_title: str = "厦大体育馆自动预约工具", 
         return True
     except Exception as e:
         _log_gui_msg(f"check_single_instance exception: {e}")
-        return True
+        raise
 
 
 def release_single_instance():
@@ -535,132 +500,160 @@ def release_single_instance():
         _SINGLE_INSTANCE_MUTEX = None
 
 
-def launch_desktop_window(port: int = 8080):
-    """启动本地 Web 服务并在前台唤起无黑框独立桌面原生窗口"""
-    if not check_single_instance():
-        sys.exit(0)
+def _browser_session(service):
+    """Only entered by an explicit user choice; keep a native exit control."""
+    from xdty_booking.runtime.windows import choose, message
+    while service.thread.is_alive():
+        if not webbrowser.open(service.url):
+            message("Unable to open the browser. Local address: " + service.url)
+        action = choose("预约工具 — 应急浏览器模式",
+                        "关闭浏览器标签页后本地服务仍在运行。退出程序将停止已开启的任务。",
+                        [("retry", "重新打开浏览器"), ("exit", "退出程序")])
+        if action != "retry":
+            return
+    raise RuntimeError("Local HTTP service stopped unexpectedly") from service.error
 
-    from xdty_booking.web.server import run_server
 
-    # 1. 在后台守护线程启动 Web 核心服务
-    server_thread = threading.Thread(
-        target=run_server,
-        kwargs={"port": port, "config_path": "config/config.yaml"},
-        daemon=True,
-    )
-    server_thread.start()
+def _run_gui(service):
+    import webview
+    from xdty_booking.runtime.windows import choose
+    from xdty_booking.runtime.paths import data_dir
+    loaded = threading.Event()
+    finished = threading.Event()
+    failed = threading.Event()
+    tray_holder = {"tray": None, "initialized": False}
+    window = webview.create_window(title="厦大体育馆自动预约工具", url=service.url,
+                                   width=1120, height=820, min_size=(900, 650))
 
-    # 稍等片刻等待端口启动
-    time.sleep(0.3)
-    url = f"http://127.0.0.1:{port}"
+    def on_closing():
+        if failed.is_set() or getattr(window, "_force_close", False):
+            return True
+        action = choose("关闭预约工具", "已开启的任务仅在程序运行期间继续执行。",
+                        [("hide", "最小化到托盘"), ("exit", "退出程序"), ("cancel", "取消")])
+        if action == "hide":
+            if tray_holder["tray"] is not None:
+                window.hide()
+            else:
+                from xdty_booking.runtime.windows import message
+                message("托盘未创建成功，窗口将保持显示。")
+            return False
+        return action == "exit"
 
-    # 2. 尝试使用 pywebview 唤起 Windows 原生独立客户端窗口 (Edge WebView2)
-    use_gui = False
-    tray_holder = {"tray": None}
-    try:
-        _patch_pywebview_frozen_loader()
-        import webview
-        try:
-            import webview.platforms.winforms as wf
-            wf.setup_app()
-        except Exception:
-            pass
+    window.events.closing += on_closing
+    window.events.loaded += lambda: loaded.set()
+    def on_shown():
+        import webview.platforms.winforms as wf
+        if wf.renderer != "edgechromium":
+            failed.set()
+            window.destroy()
+            return
+        if not tray_holder["initialized"]:
+            tray_holder["initialized"] = True
+            _setup_system_tray(window, service.url, tray_holder)
 
-        window = webview.create_window(
-            title="厦大体育馆自动预约工具",
-            url=url,
-            width=1120,
-            height=820,
-            min_size=(900, 650),
-            confirm_close=False,  # 由托盘系统的 on_closing 优雅接管
-        )
+    window.events.shown += on_shown
 
-        # 3. 拦截右上角 [X] 关闭事件，弹出三选对话框（缩小至托盘 / 彻底退出 / 取消）
-        def on_closing():
-            try:
-                import clr
-                clr.AddReference("System.Windows.Forms")
-                from System.Windows.Forms import MessageBox, MessageBoxButtons, MessageBoxIcon, DialogResult, ToolTipIcon
-                res = MessageBox.Show(
-                    "是否缩小至系统托盘并在后台保持待命？\n\n"
-                    "【是 (Yes)】：最小化到托盘（程序继续运行，已开启的定时任务和余量监测继续执行）\n"
-                    "【否 (No)】 ：彻底退出程序（终止所有后台守护服务）\n"
-                    "【取消】    ：取消本次操作，继续留在主界面",
-                    "厦大体育馆自动预约工具",
-                    MessageBoxButtons.YesNoCancel,
-                    MessageBoxIcon.Question
-                )
-                if res == DialogResult.Yes:
-                    window.hide()
-                    tray = tray_holder.get("tray")
-                    if tray is not None:
-                        try:
-                            tray.ShowBalloonTip(
-                                3000,
-                                "厦大体育馆预约助手",
-                                "已最小化到系统托盘，已开启的任务继续运行。\n单击或双击托盘图标可打开主界面。",
-                                ToolTipIcon.Info
-                            )
-                        except Exception:
-                            pass
-                    return False  # 取消关闭窗口，保持后台运行
-                elif res == DialogResult.Cancel:
-                    return False  # 取消操作，停留在当前窗口
-                else:  # DialogResult.No
-                    tray = tray_holder.get("tray")
-                    if tray is not None:
-                        try:
-                            tray.Visible = False
-                            tray.Dispose()
-                        except Exception:
-                            pass
-                    return True   # 允许窗口正常关闭退出
-            except Exception as e:
-                _log_gui_msg(f"on_closing error: {e}")
-                return True
-
-        window.events.closing += on_closing
-
-        # 核心关键：必须在窗口就绪且进入 WinForms UI STA 线程后挂载系统托盘，保证消息泵通畅
-        _tray_initialized = False
-        def on_window_shown():
-            nonlocal _tray_initialized
-            if _tray_initialized:
+    def watch():
+        deadline = time.monotonic() + 30
+        while not finished.wait(0.25):
+            if not service.thread.is_alive() or (not loaded.is_set() and time.monotonic() >= deadline):
+                failed.set()
+                _log_gui_msg("GUI initialization timeout or local service stopped")
+                window.destroy()
                 return
-            _tray_initialized = True
-            _setup_system_tray(window, url, tray_holder)
 
-        window.events.shown += on_window_shown
-
-        use_gui = True
-        webview.start()
-    except Exception as e:
-        import traceback
-        _log_gui_msg(f"launch_desktop_window error: {traceback.format_exc()}")
-        use_gui = False
+    try:
+        threading.Thread(target=watch, name="DesktopWatchdog", daemon=True).start()
+        webview.start(gui="edgechromium", storage_path=str(data_dir() / "webview-cache"))
+        if failed.is_set() or not loaded.is_set():
+            raise RuntimeError("应用内页面未能完成加载，请查看启动日志后修复组件或重试")
     finally:
+        finished.set()
         tray = tray_holder.get("tray")
         if tray is not None:
-            try:
-                tray.Visible = False
-                tray.Dispose()
-            except Exception:
-                pass
+            tray.Visible = False
+            tray.Dispose()
 
-    # 3. 容灾降级：若系统缺少 WebView2 或 pywebview 初始化异常，平滑降级为浏览器访问
-    if not use_gui:
-        _open_browser_delayed(url, delay_seconds=0.5)
-        try:
-            while True:
-                time.sleep(1)
-        except (KeyboardInterrupt, SystemExit):
-            pass
+
+def _restart_application():
+    import subprocess
+    count = int(os.environ.get("XMU_REPAIR_RESTARTS", "0"))
+    if count >= 2:
+        raise RuntimeError("组件修复重启次数已达上限，请查看日志，关闭程序后手动重试")
+    env = os.environ.copy()
+    env["XMU_REPAIR_RESTARTS"] = str(count + 1)
+    command = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, __file__]
+    subprocess.Popen(command + sys.argv[1:], cwd=APP_DIR, env=env)
+
+
+def launch_desktop_window(port: int = 8080, browser_mode=False):
+    """应用内打开；GUI 失败先修复，不自动启动浏览器。"""
+    from xdty_booking.runtime.windows import runtime_version, repair_choice, install_runtime, message
+    if not check_single_instance():
+        return
+    service = None
+    restart = False
+    try:
+        for attempt in range(3):
+            if not browser_mode and not runtime_version():
+                action = repair_choice("未检测到可用的 WebView2 Runtime。")
+            else:
+                if service is None:
+                    from xdty_booking.web.server import create_web_service
+                    service = create_web_service(port=port, auto_port=not browser_mode)
+                    service.start()
+                    service.start_monitor()
+                    _log_gui_msg("HTTP_READY " + service.url)
+                if browser_mode:
+                    _browser_session(service)
+                    return
+                try:
+                    _run_gui(service)
+                    return
+                except Exception:
+                    import traceback
+                    _log_gui_msg(traceback.format_exc())
+                    if not service.thread.is_alive():
+                        raise RuntimeError("本地服务已停止，请查看启动日志") from service.error
+                    action = repair_choice("独立窗口初始化失败。详情见 logs/startup.log 和 gui_error.log。")
+            if action == "install":
+                try:
+                    install_runtime(APP_DIR)
+                    restart = True
+                    break
+                except Exception as exc:
+                    _log_gui_msg("Runtime repair failed: " + str(exc))
+                    message(str(exc))
+            elif action == "browser":
+                browser_mode = True
+            elif action == "retry" and service is not None:
+                # CLR / GUI 已初始化后不在同一进程重建消息循环。
+                restart = True
+                break
+            elif action != "retry":
+                return
+        else:
+            message("重试次数已达上限。请查看启动日志后重新启动程序。")
+    finally:
+        if service:
+            service.close()
+        release_single_instance()
+    if restart:
+        _restart_application()
 
 
 def entry_point():
     """程序总入口"""
     if len(sys.argv) > 1:
         arg1 = sys.argv[1].lower()
+        if arg1 == "self-test":
+            import argparse
+            parser = argparse.ArgumentParser()
+            parser.add_argument("action")
+            parser.add_argument("--output", required=True)
+            args = parser.parse_args()
+            from xdty_booking.runtime.diagnostics import run_self_test
+            raise SystemExit(run_self_test(args.output))
         if arg1 in ("gui", "desktop"):
             launch_desktop_window()
             return
@@ -670,8 +663,15 @@ def entry_point():
 
         # 挂载控制台并分发给 CLI 命令行执行
         _attach_console_for_cli()
-        if "web" in sys.argv:
-            _open_browser_delayed("http://localhost:8080", delay_seconds=0.8)
+        if arg1 == "web":
+            import argparse
+            parser = argparse.ArgumentParser()
+            parser.add_argument("action")
+            parser.add_argument("--port", type=int, default=8080)
+            parser.add_argument("--host", choices=["127.0.0.1", "localhost"], default="127.0.0.1")
+            args = parser.parse_args()
+            launch_desktop_window(port=args.port, browser_mode=True)
+            return
         cli_main()
     else:
         # 无参数双击启动：直接打开现代独立原生窗口
@@ -679,4 +679,12 @@ def entry_point():
 
 
 if __name__ == "__main__":
-    entry_point()
+    try:
+        _bootstrap()
+        entry_point()
+    except Exception as exc:
+        import traceback
+        _log_gui_msg(traceback.format_exc())
+        from xdty_booking.runtime.windows import message
+        message("启动失败：{}\n\n请查看 logs/startup.log 或 gui_error.log。".format(exc))
+        sys.exit(1)

@@ -70,7 +70,8 @@ def test_check_single_instance_already_running():
         # 验证是否弹出提示信息
         mock_user32.MessageBoxW.assert_called_once()
         args, _ = mock_user32.MessageBoxW.call_args
-        assert "已在运行中（已打开）" in args[1]
+        assert "已在运行中" in args[1]
+        mock_kernel32.CloseHandle.assert_called_once_with(99999)
 
 
 def test_check_single_instance_non_windows():
@@ -80,7 +81,7 @@ def test_check_single_instance_non_windows():
 
 
 def test_run_server_port_conflict():
-    """测试 Web 服务端口被占用时优雅处理 OSError 异常而不崩溃"""
-    with patch("xdty_booking.web.server.ThreadingHTTPServer", side_effect=OSError(10048, "Address already in use")):
-        # 不应抛出异常，而是优雅返回
-        run_server(port=8080)
+    """CLI 绑定失败应传播错误，不能谎称服务已运行。"""
+    with patch("xdty_booking.web.server.create_loopback_server", side_effect=OSError(10048, "Address already in use")):
+        with pytest.raises(OSError):
+            run_server(port=8080)

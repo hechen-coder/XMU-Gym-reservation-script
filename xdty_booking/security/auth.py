@@ -56,7 +56,8 @@ def is_dev_mode() -> bool:
 def get_app_dir() -> str:
     """获取程序运行工作根目录"""
     if getattr(sys, "frozen", False):
-        return os.path.dirname(os.path.abspath(sys.executable))
+        from xdty_booking.runtime.paths import data_dir
+        return str(data_dir())
     # 源码环境下，定位到项目根目录
     cur = os.path.dirname(os.path.abspath(__file__))
     return os.path.dirname(os.path.dirname(cur))

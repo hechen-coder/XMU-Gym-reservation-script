@@ -7,6 +7,7 @@ Output/
 *.spec
 !packaging/XMU_Gym_Booking.spec
 *.manifest
+!packaging/app.manifest
 *.exe
 *.zip
 *.tar.gz

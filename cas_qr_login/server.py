@@ -701,10 +701,8 @@ def start_cas_qr_server(port: int = 8899) -> http.server.ThreadingHTTPServer:
     """启动扫码认证 Web 服务"""
     server_address = ("127.0.0.1", port)
     
-    class ReusableTCPServer(http.server.ThreadingHTTPServer):
-        allow_reuse_address = True
-
-    httpd = ReusableTCPServer(server_address, CasQrRequestHandler)
+    from xdty_booking.runtime.http_server import create_loopback_server
+    httpd = create_loopback_server(CasQrRequestHandler, port)
     t = threading.Thread(target=httpd.serve_forever, daemon=True)
     t.start()
     logger.info(f"🚀 CAS 扫码登录服务端已就绪: http://127.0.0.1:{port}")
