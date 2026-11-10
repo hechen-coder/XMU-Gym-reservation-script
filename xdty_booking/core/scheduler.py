@@ -18,7 +18,12 @@ from xdty_booking.notify.notifier import Notifier
 logger = logging.getLogger(__name__)
 
 # execute_booking 返回这些 reason 时，准点后宽限期内视为“尚未放票”而非最终失败
-_NOT_RELEASED_REASONS = ("course_occupied", "slot_missing", "query_failed")
+_NOT_RELEASED_REASONS = (
+    "course_occupied",
+    "slot_missing",
+    "query_failed",
+    "slot_mapping_changed",
+)
 
 def planned_slots(cfg: AppConfig, visit_date: str) -> List[str]:
     """某入场日期应预约的时段，按优先级从高到低：特例表优先，其次每周计划（按星期），非每周模式用固定时段。"""
