@@ -46,6 +46,43 @@ class BookingEngine:
         target = datetime.now() + timedelta(days=offset)
         return target.strftime("%Y-%m-%d")
 
+    def _revalidate_slot_binding(self, slot: SlotItem, group: TimeSlotGroup):
+        target = self.cfg.target
+        try:
+            fresh = self.api.get_intervals(
+                target.venue_id,
+                target.stadium_id,
+                target.category_id,
+                target.user_range,
+            )
+        except Exception:
+            return {
+                "success": False,
+                "reason": "query_failed",
+                "info": "未提交预约：重新核验场次映射失败",
+            }
+        if getattr(fresh, "status", 0) != 1:
+            return {
+                "success": False,
+                "reason": "query_failed",
+                "info": "未提交预约：场次接口返回异常",
+            }
+        bindings = {
+            (candidate_group.date, candidate_group.time_range)
+            for candidate_group in fresh.time_slot_list
+            for candidate_slot in candidate_group.slots
+            if str(candidate_slot.interval_id) == str(slot.interval_id)
+            and str(candidate_slot.column_id) == str(slot.column_id)
+        }
+        expected = {(slot.date, group.time_range)}
+        if bindings != expected:
+            return {
+                "success": False,
+                "reason": "slot_mapping_changed",
+                "info": "未提交预约：学校场次ID与目标时段映射已变化",
+            }
+        return None
+
     def _submit_slot(
         self,
         slot: SlotItem,
@@ -59,6 +96,10 @@ class BookingEngine:
             return _skip_course_occupied()
         if slot.is_locked:
             return {"success": False, "info": "该场次当前不可预约"}
+        if group is not None:
+            binding_error = self._revalidate_slot_binding(slot, group)
+            if binding_error:
+                return binding_error
 
         target = self.cfg.target
         week = group.week if group else "5"

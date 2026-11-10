@@ -8,6 +8,7 @@ from xdty_booking.core.scheduler import BookingScheduler
 
 NOT_RELEASED = {'success': False, 'skipped': True, 'reason': 'course_occupied', 'info': '仍锁定'}
 MISSING = {'success': False, 'reason': 'slot_missing', 'info': '未找到指定时段场次'}
+MAPPING_CHANGED = {'success': False, 'reason': 'slot_mapping_changed', 'info': '映射已变化'}
 BOOKED = {'success': True, 'info': '预约成功'}
 FULL = {'success': False, 'info': '该时段目前无空闲名额 (已约满 30/30)', 'full': True}
 
@@ -28,6 +29,11 @@ def run_once(cfg, results):
 def test_keeps_polling_until_slot_is_released():
     res, booking = run_once(AppConfig(), [MISSING, NOT_RELEASED, BOOKED])
     assert res['success'] and booking.call_count == 3
+
+
+def test_retries_while_interval_binding_is_being_refreshed():
+    res, booking = run_once(AppConfig(), [MAPPING_CHANGED, BOOKED])
+    assert res['success'] and booking.call_count == 2
 
 
 def test_still_locked_after_grace_period_is_course_occupied():
