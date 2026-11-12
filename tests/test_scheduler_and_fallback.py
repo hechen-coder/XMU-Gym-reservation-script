@@ -1,4 +1,7 @@
 from unittest.mock import Mock, MagicMock, patch
+
+import pytest
+
 from xdty_booking.core.models import IntervalResponse, SlotItem, TimeSlotGroup, parse_time_to_minutes
 from xdty_booking.core.booking_engine import BookingEngine
 from xdty_booking.core.scheduler import BookingScheduler
@@ -75,6 +78,38 @@ def test_booking_engine_fallback_nearest_when_preferred_is_full():
     assert res["success"] is True
     assert res.get("fallback") is True
     assert res["slot"].interval_id == "101"
+
+
+@pytest.mark.parametrize("reply", [
+    {"status": 0, "info": "预约失败，请稍后再试#0 think\\Error"},
+    [],
+    TimeoutError("预校验超时"),
+], ids=["server-error", "invalid-response", "timeout"])
+def test_monitor_stops_when_available_fallback_cannot_be_verified(reply):
+    date = "2026-09-12"
+    slot = SlotItem(column_id="67", date=date, area_name="健身房", interval_id="101",
+                    price=0, selected=94, max_count=95, status="available")
+    group = TimeSlotGroup(time_range="18:00-19:30", start_time="18:00", end_time="19:30",
+                          date=date, week="6", week_name="周六", slots=[slot])
+    api = Mock()
+    api.get_intervals.return_value = IntervalResponse(
+        status=1, info="", venue_id="14", date_list=[], time_slot_list=[group],
+    )
+    api.choose_verify.side_effect = [reply]
+    stop_event = Mock()
+    stop_event.is_set.return_value = False
+    stop_event.wait.return_value = True
+
+    result = BookingEngine(api, Mock(), AppConfig()).snipe_booking(
+        target_date=date, preferred_time="19:30-21:00", fallback_nearest=True, stop_event=stop_event,
+    )
+
+    assert result["reason"] == "precheck_error"
+    assert not result.get("full")
+    api.choose_verify.assert_called_once()
+    api.get_captcha.assert_not_called()
+    api.add_order.assert_not_called()
+    stop_event.wait.assert_not_called()
 
 def test_scheduler_pre_check_session():
     cfg = AppConfig()

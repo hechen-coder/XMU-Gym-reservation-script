@@ -36,8 +36,18 @@ class ApiClient:
         self.session.cookies.set("COOKIE_IS_APP_UI", "0")
 
     def set_session_token(self, phpsessid: str):
-        """设置或更新 PHPSESSID cookie"""
-        self.session.cookies.set("PHPSESSID", phpsessid)
+        """更新 PHPSESSID，保留服务端已设置的同值 Cookie 及其作用域。"""
+        jar = self.session.cookies
+        session_cookies = [cookie for cookie in jar if cookie.name == "PHPSESSID"]
+        server_cookie = next(
+            (cookie for cookie in session_cookies if cookie.domain and cookie.value == phpsessid),
+            None,
+        )
+        for cookie in session_cookies:
+            if cookie is not server_cookie:
+                jar.clear(cookie.domain, cookie.path, cookie.name)
+        if server_cookie is None and phpsessid:
+            jar.set("PHPSESSID", phpsessid)
 
     def post(self, path: str, data: Optional[Dict[str, Any]] = None, referer: Optional[str] = None) -> requests.Response:
         url = f"{self.base_url}/{path.lstrip('/')}"

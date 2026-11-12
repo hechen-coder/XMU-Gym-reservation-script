@@ -194,17 +194,20 @@ class XdtyApi:
 
         return IntervalResponse.from_dict(res_json)
 
-    def choose_verify(self, stadium_id: int, venue_id: int, selected_slots: List[Dict[str, Any]], is_academy: int = 1, ids: str = "") -> Dict[str, Any]:
+    def choose_verify(self, stadium_id: int, venue_id: int, selected_slots: List[Dict[str, Any]], is_academy: int = 1, ids: Optional[str] = None) -> Dict[str, Any]:
         """选择场次预校验接口 (chooseVerify)"""
+        # 与选场页的表单字段顺序和 JSON 编码保持一致。
+        data = {
+            "stadium_id": stadium_id,
+            "selected": json.dumps(selected_slots, ensure_ascii=False, separators=(",", ":")),
+            "venue_id": venue_id,
+            "is_academy": is_academy,
+        }
+        if ids:
+            data["ids"] = ids
         return self.client.post(
             "public/index.php/index/stadium/chooseVerify",
-            data={
-                "stadium_id": stadium_id,
-                "venue_id": venue_id,
-                "selected": json.dumps(selected_slots, ensure_ascii=False),
-                "is_academy": is_academy,
-                "ids": ids
-            }
+            data=data
         ).json()
 
     def get_venue_config(self, stadium_id: int, venue_id: int, category_id: int = 8) -> Dict[str, Any]:

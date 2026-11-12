@@ -122,11 +122,15 @@ def test_choose_verify(mock_client):
         mock_resp.json.return_value = {"status": 1, "info": "", "data": []}
         mock_post.return_value = mock_resp
 
-        res = api.choose_verify(stadium_id=16, venue_id=14, selected_slots=[{"interval_id": "3080"}])
+        res = api.choose_verify(
+            stadium_id=16,
+            venue_id=14,
+            selected_slots=[{"interval_id": "3080", "area_name": "健身房"}],
+        )
         assert res["status"] == 1
         post_data = mock_post.call_args[1]["data"]
-        assert "selected" in post_data
-        assert json.loads(post_data["selected"])[0]["interval_id"] == "3080"
+        assert list(post_data) == ["stadium_id", "selected", "venue_id", "is_academy"]
+        assert post_data["selected"] == '[{"interval_id":"3080","area_name":"健身房"}]'
 
 def test_add_order(mock_client):
     api = XdtyApi(mock_client)

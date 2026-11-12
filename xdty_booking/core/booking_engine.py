@@ -82,21 +82,30 @@ class BookingEngine:
                 venue_id=target.venue_id,
                 selected_slots=selected_payload
             )
-            logger.info(f"预校验结果: {verify_res}")
-            if isinstance(verify_res, dict) and verify_res.get("status") == 0:
-                info_msg = str(verify_res.get("info") or "选场预校验未通过")
-                logger.warning(f"服务端预校验未通过: {info_msg}")
-                if any(word in info_msg for word in ("课程", "排课", "教学占用", "教学排课占用")):
-                    return _skip_course_occupied(info_msg)
-                return {
-                    "success": False,
-                    "info": info_msg,
-                    "slot": slot,
-                    "raw": verify_res,
-                    "capacity_full": ("满" in info_msg or "超额" in info_msg)
-                }
         except Exception as e:
-            logger.warning(f"预校验调用异常 ({e})，继续直接提交")
+            logger.warning("选场预校验请求失败: %s", type(e).__name__)
+            return {"success": False, "info": "选场预校验请求失败，请稍后重试", "reason": "precheck_error"}
+
+        verify_status = verify_res.get("status") if isinstance(verify_res, dict) else None
+        if verify_status not in (1, 0, -1):
+            logger.warning("选场预校验返回了无法识别的响应")
+            return {"success": False, "info": "选场预校验响应异常，请稍后重试", "reason": "precheck_error"}
+        if verify_status != 1:
+            info_msg = str(verify_res.get("info") or "选场预校验未通过")
+            if "think\\Error" in info_msg or "/www/bdlp_h5_fitness_test" in info_msg:
+                logger.warning("选场预校验返回服务端内部异常")
+                return {"success": False, "info": "场馆服务端选场预校验异常，请稍后重试", "reason": "precheck_error"}
+            logger.warning("服务端预校验未通过: %s", info_msg)
+            if any(word in info_msg for word in ("课程", "排课", "教学占用", "教学排课占用")):
+                return _skip_course_occupied(info_msg)
+            return {
+                "success": False,
+                "info": info_msg,
+                "slot": slot,
+                "raw": verify_res,
+                "capacity_full": ("满" in info_msg or "超额" in info_msg)
+            }
+        logger.info("选场预校验通过")
 
         # 2. 极速获取并识别验证码
         captcha_code = ""
@@ -350,7 +359,7 @@ class BookingEngine:
             if fallback_res.get("success"):
                 fallback_res["fallback"] = True
                 return fallback_res
-            if fallback_res.get("reason") in ("outcome_unknown", "booking_in_progress"):
+            if fallback_res.get("reason") in ("outcome_unknown", "booking_in_progress", "precheck_error"):
                 return fallback_res
 
         logger.error(f"日期 {target_date_str} 的所有就近备选时段均尝试完毕，无可用名额")
@@ -407,7 +416,7 @@ class BookingEngine:
                     status_callback(attempt, f"⚠️ 课程占用跳过: {res.get('info')}")
                 return res
 
-            if res.get("reason") in ("outcome_unknown", "booking_in_progress"):
+            if res.get("reason") in ("outcome_unknown", "booking_in_progress", "precheck_error"):
                 return res
 
             if not res.get("full"):

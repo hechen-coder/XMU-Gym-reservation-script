@@ -88,6 +88,8 @@ _FAILURE_KINDS = (
 
 def classify_failure(res: Dict[str, Any]) -> str:
     """把 execute_booking 的失败结果归类为便于一眼识别的标题"""
+    if res.get("reason") == "precheck_error":
+        return "选场预校验异常"
     if res.get("full") or res.get("capacity_full"):
         return "名额已满"
     info = str(res.get("info", ""))
@@ -388,7 +390,7 @@ class BookingScheduler:
                     )
                     if res.get("success"):
                         break
-                    if res.get("reason") in ("outcome_unknown", "booking_in_progress"):
+                    if res.get("reason") in ("outcome_unknown", "booking_in_progress", "precheck_error"):
                         pending.clear()
                         break
                     if res.get("reason") not in _NOT_RELEASED_REASONS:

@@ -16,7 +16,12 @@ def test_api_check_login_success():
     mock_resp.cookies.get.return_value = "new_sess_12345"
     mock_resp.headers = {"Set-Cookie": "PHPSESSID=new_sess_12345; path=/"}
 
-    with patch.object(client, "post", return_value=mock_resp) as mock_post:
+    def post_with_session_cookie(*args, **kwargs):
+        # requests 会先把 Set-Cookie 按域名写入 Session。
+        client.session.cookies.set("PHPSESSID", "new_sess_12345", domain="test.edu.cn", path="/", secure=True)
+        return mock_resp
+
+    with patch.object(client, "post", side_effect=post_with_session_cookie) as mock_post:
         success, phpsessid, data = api.check_login({
             "token": "TEST_TOKEN_12345678",
             "sign": "TEST_SIGN",
@@ -29,7 +34,11 @@ def test_api_check_login_success():
         assert success is True
         assert phpsessid == "new_sess_12345"
         assert data.get("status") == 1
+        client.set_session_token(phpsessid)
         assert client.session.cookies.get("PHPSESSID") == "new_sess_12345"
+        session_cookie = next(cookie for cookie in client.session.cookies if cookie.name == "PHPSESSID")
+        assert session_cookie.domain == "test.edu.cn"
+        assert session_cookie.secure
         mock_post.assert_called_once()
         args, kwargs = mock_post.call_args
         assert args[0] == "public/index.php/index/Index/checkLogin"

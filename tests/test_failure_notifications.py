@@ -41,6 +41,7 @@ def _sent(notifier):
     ({"success": False, "info": "查询场次失败: 登录信息失效,请退出重新登录"}, "登录失效"),
     ({"success": False, "info": "该时段目前无空闲名额 (已约满 3/3)", "full": True}, "名额已满"),
     ({"success": False, "info": "名额已满", "capacity_full": True}, "名额已满"),
+    ({"success": False, "info": "场馆服务端选场预校验异常，请稍后重试", "reason": "precheck_error"}, "选场预校验异常"),
     ({"success": False, "info": "验证码错误"}, "验证码"),
     ({"success": False, "info": "查询场次列表网络异常: timeout"}, "网络异常"),
     ({"success": False, "info": "未找到指定时段场次: 日期 2026-09-19, 时段 16:30-18:00"}, "未找到场次"),
