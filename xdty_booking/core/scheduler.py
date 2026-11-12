@@ -18,7 +18,7 @@ from xdty_booking.notify.notifier import Notifier
 logger = logging.getLogger(__name__)
 
 # execute_booking 返回这些 reason 时，准点后宽限期内视为“尚未放票”而非最终失败
-_NOT_RELEASED_REASONS = ("course_occupied", "slot_missing", "query_failed")
+_NOT_RELEASED_REASONS = ("course_occupied", "slot_missing", "query_failed", "slot_mapping_changed")
 
 def planned_slots(cfg: AppConfig, visit_date: str) -> List[str]:
     """某入场日期应预约的时段，按优先级从高到低：特例表优先，其次每周计划（按星期），非每周模式用固定时段。"""
@@ -399,7 +399,7 @@ class BookingScheduler:
                 if res.get("success") or not pending or time.time() >= deadline:
                     break
                 if self.status_callback:
-                    self.status_callback(f"⏳ 时段尚未放出 ({res.get('info')})，{int(deadline - time.time())} 秒内持续轮询...")
+                    self.status_callback(f"⏳ {res.get('info')}，{int(deadline - time.time())} 秒内继续查询场次...")
                 if self._stop_event.wait(2.0):
                     return {"success": False, "info": "定时任务已被手动终止"}
 

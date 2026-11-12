@@ -1,7 +1,12 @@
 from unittest.mock import Mock, patch
 from xdty_booking.core.booking_engine import BookingEngine
-from xdty_booking.core.models import SlotItem
+from xdty_booking.core.models import IntervalResponse, SlotItem, TimeSlotGroup
 from xdty_booking.config import AppConfig
+
+
+def _intervals_for_slot(slot):
+    group = TimeSlotGroup("19:30-21:00", "19:30", "21:00", slot.date, "6", "周六", [slot])
+    return IntervalResponse(status=1, info="", venue_id="14", date_list=[], time_slot_list=[group])
 
 def test_booking_engine_full_flow_success():
     api = Mock()
@@ -19,10 +24,7 @@ def test_booking_engine_full_flow_success():
         max_count=95,
         status="available"
     )
-    mock_interval_resp = Mock()
-    mock_interval_resp.status = 1
-    mock_interval_resp.find_slot.return_value = slot
-    api.get_intervals.return_value = mock_interval_resp
+    api.get_intervals.return_value = _intervals_for_slot(slot)
     api.choose_verify.return_value = {"status": 1}
     api.get_venue_config.return_value = {"status": 1, "data": {"info": {"needRemark": 0, "isCanAppoint": True}}}
     api.get_captcha.return_value = b"image_bytes"
@@ -66,10 +68,7 @@ def test_booking_engine_retry_on_captcha_error():
         max_count=95,
         status="available"
     )
-    mock_interval_resp = Mock()
-    mock_interval_resp.status = 1
-    mock_interval_resp.find_slot.return_value = slot
-    api.get_intervals.return_value = mock_interval_resp
+    api.get_intervals.return_value = _intervals_for_slot(slot)
     api.choose_verify.return_value = {"status": 1}
     api.get_captcha.return_value = b"bytes"
     
@@ -102,10 +101,7 @@ def test_booking_engine_with_interval_id():
         max_count=95,
         status="available"
     )
-    mock_resp = Mock()
-    mock_resp.status = 1
-    mock_resp.find_by_id.return_value = (Mock(week="6", week_name="周六", time_range="19:30-21:00"), slot)
-    api.get_intervals.return_value = mock_resp
+    api.get_intervals.return_value = _intervals_for_slot(slot)
     api.choose_verify.return_value = {"status": 1}
     api.get_captcha.return_value = b"bytes"
     api.add_order.return_value = {"status": 1, "info": "预约成功"}

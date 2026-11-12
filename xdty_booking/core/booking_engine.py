@@ -3,6 +3,7 @@ import logging
 import threading
 from typing import Dict, Any, Optional, Callable
 from datetime import datetime, timedelta
+from requests.exceptions import Timeout
 from xdty_booking.api.endpoints import XdtyApi
 from xdty_booking.solver.captcha_solver import CaptchaSolver
 from xdty_booking.config import AppConfig
@@ -46,6 +47,41 @@ class BookingEngine:
         target = datetime.now() + timedelta(days=offset)
         return target.strftime("%Y-%m-%d")
 
+    def _revalidate_slot_binding(self, slot: SlotItem, group: TimeSlotGroup) -> Optional[Dict[str, Any]]:
+        target = self.cfg.target
+        try:
+            fresh = self.api.get_intervals(
+                venue_id=target.venue_id,
+                stadium_id=target.stadium_id,
+                category_id=target.category_id,
+                user_range=target.user_range,
+            )
+        except Exception as e:
+            logger.warning("场次复查请求失败: %s", type(e).__name__)
+            info = "场次复查超时" if isinstance(e, (Timeout, TimeoutError)) else "场次复查请求失败"
+            return {"success": False, "reason": "query_failed", "info": info}
+
+        if fresh.status != 1:
+            return {
+                "success": False,
+                "reason": "query_failed",
+                "info": f"场次复查失败：{fresh.info or '场次接口返回异常'}",
+            }
+
+        bindings = {
+            (fresh_group.date, fresh_group.time_range, fresh_slot.date)
+            for fresh_group in fresh.time_slot_list
+            for fresh_slot in fresh_group.slots
+            if fresh_slot.interval_id == slot.interval_id and fresh_slot.column_id == slot.column_id
+        }
+        if bindings != {(slot.date, group.time_range, slot.date)}:
+            return {
+                "success": False,
+                "reason": "slot_mapping_changed",
+                "info": "场次编号与目标日期、时段或场地的绑定已变化，需重新查询",
+            }
+        return None
+
     def _submit_slot(
         self,
         slot: SlotItem,
@@ -59,11 +95,18 @@ class BookingEngine:
             return _skip_course_occupied()
         if slot.is_locked:
             return {"success": False, "info": "该场次当前不可预约"}
+        if group is None or group.date != slot.date or not all(
+            (slot.interval_id, slot.column_id, slot.date, group.time_range)
+        ):
+            return {"success": False, "reason": "slot_mapping_changed", "info": "场次信息不完整，无法核验编号"}
+        binding_error = self._revalidate_slot_binding(slot, group)
+        if binding_error is not None:
+            return binding_error
 
         target = self.cfg.target
-        week = group.week if group else "5"
-        week_name = group.week_name if group else "周五"
-        time_range = group.time_range if group else slot.interval_id
+        week = group.week
+        week_name = group.week_name
+        time_range = group.time_range
 
         # 1. 执行选场预校验 (chooseVerify)
         selected_payload = [{
@@ -359,7 +402,7 @@ class BookingEngine:
             if fallback_res.get("success"):
                 fallback_res["fallback"] = True
                 return fallback_res
-            if fallback_res.get("reason") in ("outcome_unknown", "booking_in_progress", "precheck_error"):
+            if not fallback_res.get("capacity_full"):
                 return fallback_res
 
         logger.error(f"日期 {target_date_str} 的所有就近备选时段均尝试完毕，无可用名额")

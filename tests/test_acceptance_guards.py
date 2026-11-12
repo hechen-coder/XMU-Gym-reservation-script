@@ -12,7 +12,7 @@ from xdty_booking.api.client import ApiClient
 from xdty_booking.api.endpoints import XdtyApi
 from xdty_booking.config import load_config, save_auth_params, save_phpsessid
 from xdty_booking.core.booking_engine import BookingEngine
-from xdty_booking.core.models import SlotItem
+from xdty_booking.core.models import SlotItem, TimeSlotGroup
 from xdty_booking.config import AppConfig
 from xdty_booking.web.server import GymStatusHandler, ThreadingHTTPServer, run_server
 from xdty_booking.web.template import render_dashboard
@@ -75,9 +75,9 @@ def test_concurrent_order_request_is_rejected_while_first_is_running():
 def test_booking_exception_does_not_retry_or_fallback():
     api = Mock()
     slot = SlotItem("67", "2026-09-27", "力量区", "3087", 0, 0, 20, "available")
-    intervals = Mock(status=1)
-    intervals.find_slot_with_group.return_value = None
-    intervals.find_slot.return_value = slot
+    group = TimeSlotGroup("19:30-21:00", "19:30", "21:00", slot.date, "7", "周日", [slot])
+    intervals = Mock(status=1, time_slot_list=[group])
+    intervals.find_slot_with_group.return_value = group, slot
     api.get_intervals.return_value = intervals
     api.choose_verify.return_value = {"status": 1}
     api.get_captcha.return_value = b"png"

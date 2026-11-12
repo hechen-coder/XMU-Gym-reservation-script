@@ -8,6 +8,8 @@ from xdty_booking.core.scheduler import BookingScheduler
 
 NOT_RELEASED = {'success': False, 'skipped': True, 'reason': 'course_occupied', 'info': '仍锁定'}
 MISSING = {'success': False, 'reason': 'slot_missing', 'info': '未找到指定时段场次'}
+MAPPING_CHANGED = {'success': False, 'reason': 'slot_mapping_changed', 'info': '场次映射变化'}
+RECHECK_FAILED = {'success': False, 'reason': 'query_failed', 'info': '场次复查超时'}
 BOOKED = {'success': True, 'info': '预约成功'}
 FULL = {'success': False, 'info': '该时段目前无空闲名额 (已约满 30/30)', 'full': True}
 
@@ -28,6 +30,16 @@ def run_once(cfg, results):
 def test_keeps_polling_until_slot_is_released():
     res, booking = run_once(AppConfig(), [MISSING, NOT_RELEASED, BOOKED])
     assert res['success'] and booking.call_count == 3
+
+
+@pytest.mark.parametrize("failure", [MAPPING_CHANGED, RECHECK_FAILED])
+def test_slot_recheck_failure_can_retry_within_release_grace(failure):
+    res, booking = run_once(AppConfig(), [failure, BOOKED])
+    assert res["success"] and booking.call_count == 2
+
+    expired = AppConfig(scheduler=SchedulerConfig(release_grace_seconds=0))
+    res, booking = run_once(expired, [failure, BOOKED])
+    assert res["reason"] == failure["reason"] and booking.call_count == 1
 
 
 def test_still_locked_after_grace_period_is_course_occupied():
