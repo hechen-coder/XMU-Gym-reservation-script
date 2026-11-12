@@ -11,6 +11,9 @@ from typing import ClassVar, Optional, List, Dict, Any, Callable
 
 logger = logging.getLogger(__name__)
 
+SNIPE_POLL_INTERVAL_OPTIONS = (10, 15, 20)
+SNIPE_DEFAULT_POLL_INTERVAL = 20
+
 _CONFIG_LOCK = threading.RLock()
 
 @contextmanager

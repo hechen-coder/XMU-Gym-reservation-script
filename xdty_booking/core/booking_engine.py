@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from requests.exceptions import Timeout
 from xdty_booking.api.endpoints import XdtyApi
 from xdty_booking.solver.captcha_solver import CaptchaSolver
-from xdty_booking.config import AppConfig
+from xdty_booking.config import AppConfig, SNIPE_DEFAULT_POLL_INTERVAL
 from xdty_booking.core.models import SlotItem, TimeSlotGroup
 from xdty_booking.notify.notifier import Notifier
 
@@ -413,7 +413,7 @@ class BookingEngine:
         target_date: Optional[str] = None,
         preferred_time: Optional[str] = None,
         interval_id: Optional[str] = None,
-        poll_interval: float = 2.0,
+        poll_interval: float = SNIPE_DEFAULT_POLL_INTERVAL,
         max_duration_seconds: int = 86400,
         fallback_nearest: bool = False,
         stop_event: Optional[threading.Event] = None,

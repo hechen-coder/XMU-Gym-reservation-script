@@ -12,6 +12,8 @@ from xdty_booking.runtime.http_server import create_loopback_server, LocalServic
 from typing import Optional, Dict, Any
 
 from xdty_booking.config import (
+    SNIPE_DEFAULT_POLL_INTERVAL,
+    SNIPE_POLL_INTERVAL_OPTIONS,
     load_config,
     ensure_config_file,
     save_phpsessid,
@@ -296,7 +298,7 @@ class SnipeManager:
         config_path: str = _GLOBAL_CONFIG_PATH,
         target_date: Optional[str] = None,
         preferred_time: Optional[str] = None,
-        poll_interval: float = 2.0,
+        poll_interval: float = SNIPE_DEFAULT_POLL_INTERVAL,
         fallback_nearest: bool = False
     ) -> Dict[str, Any]:
         with self._lock:
@@ -952,15 +954,19 @@ class GymStatusHandler(BaseHTTPRequestHandler):
             c_path = _ensure_config_path(_GLOBAL_CONFIG_PATH)
             target_date = body_json.get("target_date") or (params.get("target_date", [None])[0] if params.get("target_date") else None)
             preferred_time = body_json.get("preferred_time") or (params.get("preferred_time", [None])[0] if params.get("preferred_time") else None)
-            poll_interval = float(body_json.get("poll_interval") or (params.get("poll_interval", [2.0])[0] if params.get("poll_interval") else 2.0))
+            requested_interval = body_json.get("poll_interval")
+            if requested_interval is None:
+                requested_interval = (params.get("poll_interval") or [SNIPE_DEFAULT_POLL_INTERVAL])[0]
+            poll_interval = float(requested_interval)
             fallback_nearest = body_json.get("fallback_nearest", False)
             if target_date:
                 datetime.strptime(target_date, "%Y-%m-%d")
             if preferred_time:
                 from xdty_booking.config import SchedulerConfig
                 SchedulerConfig._check_slot(preferred_time)
-            if not math.isfinite(poll_interval) or not 1.0 <= poll_interval <= 60.0:
-                raise ValueError("检查间隔须在 1 到 60 秒之间")
+            min_interval = min(SNIPE_POLL_INTERVAL_OPTIONS)
+            if not math.isfinite(poll_interval) or not min_interval <= poll_interval <= 60:
+                raise ValueError(f"检查间隔须在 {min_interval} 到 60 秒之间")
             if not isinstance(fallback_nearest, bool):
                 raise ValueError("请选择是否允许尝试相邻时段")
 

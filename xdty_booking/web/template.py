@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from html import escape
+from xdty_booking.config import SNIPE_DEFAULT_POLL_INTERVAL, SNIPE_POLL_INTERVAL_OPTIONS
 from xdty_booking.security.auth import get_auth_status
 
 MAX_PRIORITY_SLOTS = 3
@@ -60,6 +61,16 @@ def render_dashboard(data: dict) -> str:
 
     snipe_status = data.get("snipe_status", {})
     is_snipe_running = snipe_status.get("running", False)
+    snipe_interval_buttons = []
+    for seconds in SNIPE_POLL_INTERVAL_OPTIONS:
+        is_default = seconds == SNIPE_DEFAULT_POLL_INTERVAL
+        css_class = "time-chip active" if is_default else "time-chip"
+        label = f"{seconds} 秒（默认）" if is_default else f"{seconds} 秒"
+        snipe_interval_buttons.append(
+            f'<button type="button" class="{css_class}" data-val="{seconds}" '
+            f'onclick="setSnipeInterval({seconds})">{label}</button>'
+        )
+    snipe_interval_chips = "\n".join(snipe_interval_buttons)
 
     notify_config = data.get("notify_config", {})
     is_notify_enabled = bool(notify_config.get("enabled", False))
@@ -1551,14 +1562,12 @@ def render_dashboard(data: dict) -> str:
                 <div class="form-group">
                     <div class="form-label">
                         <span>⏱️ 检查间隔</span>
-                        <span style="font-size: 12px; font-weight: normal; color: #64748b;">当前选中: <strong id="snipeIntervalDisplay" style="color: #2563eb; font-weight: 700;">2 秒</strong>（默认）</span>
+                        <span style="font-size: 12px; font-weight: normal; color: #64748b;">当前选中: <strong id="snipeIntervalDisplay" style="color: #2563eb; font-weight: 700;">{SNIPE_DEFAULT_POLL_INTERVAL} 秒</strong></span>
                     </div>
                     <div class="time-chips-wrap" id="snipeIntervalChips">
-                        <button type="button" class="time-chip" data-val="1.5" onclick="setSnipeInterval(1.5)">⚡ 1.5 秒</button>
-                        <button type="button" class="time-chip active" data-val="2.0" onclick="setSnipeInterval(2.0)">⭐ 2 秒（默认）</button>
-                        <button type="button" class="time-chip" data-val="3.0" onclick="setSnipeInterval(3.0)">🌿 3 秒</button>
+                        {snipe_interval_chips}
                     </div>
-                    <input type="hidden" id="snipePollInterval" value="2.0">
+                    <input type="hidden" id="snipePollInterval" value="{SNIPE_DEFAULT_POLL_INTERVAL}">
                 </div>
 
                 <!-- 余量监测表单 4: 辅助选项 -->
@@ -2811,7 +2820,7 @@ def render_dashboard(data: dict) -> str:
         async function startSnipeTask() {{
             const targetDate = (document.getElementById("snipeDateInput").value || "").trim();
             const prefTime = (document.getElementById("snipePrefTimeInput").value || "").trim();
-            const pollInterval = parseFloat(document.getElementById("snipePollInterval").value || "2.0");
+            const pollInterval = parseFloat(document.getElementById("snipePollInterval").value || "{SNIPE_DEFAULT_POLL_INTERVAL}");
             const fallbackNearest = document.getElementById("snipeFallbackNearest").checked;
 
             if (!targetDate) {{
